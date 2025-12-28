@@ -46,9 +46,14 @@ export interface DxfPolyline extends DxfEntity {
 export interface DxfText extends DxfEntity {
     type: 'TEXT' | 'MTEXT';
     position: DxfPoint;
+    alignmentPoint?: DxfPoint;  // Second alignment point (group 11, 21)
     text: string;
     height: number;
     rotation?: number;
+    horizontalAlignment?: number;  // TEXT: 0=Left, 1=Center, 2=Right, 3=Aligned, 4=Middle, 5=Fit
+    verticalAlignment?: number;    // TEXT: 0=Baseline, 1=Bottom, 2=Middle, 3=Top
+    attachmentPoint?: number;      // MTEXT: 1-9 (1=TopLeft, 2=TopCenter, 3=TopRight, 4=MiddleLeft, etc.)
+    width?: number;                // MTEXT width
 }
 
 export interface DxfPoint_ extends DxfEntity {
@@ -98,6 +103,29 @@ export interface DxfDimension extends DxfEntity {
     rotation: number;
 }
 
+export interface DxfSolid extends DxfEntity {
+    type: 'SOLID' | '3DFACE';
+    points: DxfPoint[];  // 3 or 4 corner points
+}
+
+export interface DxfAttrib extends DxfEntity {
+    type: 'ATTRIB' | 'ATTDEF';
+    position: DxfPoint;
+    text: string;
+    tag: string;
+    height: number;
+    rotation?: number;
+    horizontalAlignment?: number;
+    verticalAlignment?: number;
+}
+
+export interface DxfLeader extends DxfEntity {
+    type: 'LEADER';
+    vertices: DxfPoint[];
+    hasArrowhead: boolean;
+    annotationType: number;  // 0=text, 1=tolerance, 2=block ref, 3=none
+}
+
 export interface DxfLayer {
     name: string;
     color: number;
@@ -123,7 +151,7 @@ export interface ParsedDxf {
     };
 }
 
-type AnyDxfEntity = DxfLine | DxfCircle | DxfArc | DxfPolyline | DxfText | DxfPoint_ | DxfInsert | DxfEllipse | DxfSpline | DxfHatch | DxfDimension;
+type AnyDxfEntity = DxfLine | DxfCircle | DxfArc | DxfPolyline | DxfText | DxfPoint_ | DxfInsert | DxfEllipse | DxfSpline | DxfHatch | DxfDimension | DxfSolid | DxfAttrib | DxfLeader;
 
 export class DxfParser {
     private lines: string[] = [];
@@ -390,6 +418,14 @@ export class DxfParser {
                 return this.parseHatch();
             case 'DIMENSION':
                 return this.parseDimension();
+            case 'SOLID':
+            case '3DFACE':
+                return this.parseSolid(entityType);
+            case 'ATTRIB':
+            case 'ATTDEF':
+                return this.parseAttrib(entityType);
+            case 'LEADER':
+                return this.parseLeader();
             default:
                 this.skipEntity();
                 return null;
@@ -689,7 +725,9 @@ export class DxfParser {
             layer: '0',
             position: { x: 0, y: 0 },
             text: '',
-            height: 1
+            height: 1,
+            horizontalAlignment: 0,
+            verticalAlignment: 0
         };
 
         while (this.pos < this.lines.length) {
@@ -719,13 +757,39 @@ export class DxfParser {
                 case 20:
                     text.position.y = parseFloat(this.groupValue);
                     break;
+                case 11:
+                    // Second alignment point X
+                    if (!text.alignmentPoint) {
+                        text.alignmentPoint = { x: 0, y: 0 };
+                    }
+                    text.alignmentPoint.x = parseFloat(this.groupValue);
+                    break;
+                case 21:
+                    // Second alignment point Y
+                    if (!text.alignmentPoint) {
+                        text.alignmentPoint = { x: 0, y: 0 };
+                    }
+                    text.alignmentPoint.y = parseFloat(this.groupValue);
+                    break;
                 case 40:
                     text.height = parseFloat(this.groupValue);
                     break;
                 case 50:
                     text.rotation = parseFloat(this.groupValue);
                     break;
+                case 72:
+                    text.horizontalAlignment = parseInt(this.groupValue, 10);
+                    break;
+                case 73:
+                    text.verticalAlignment = parseInt(this.groupValue, 10);
+                    break;
             }
+        }
+
+        // If alignment is not left-baseline and alignmentPoint exists, use it as the reference
+        if ((text.horizontalAlignment !== 0 || text.verticalAlignment !== 0) && text.alignmentPoint) {
+            // For aligned text, the alignmentPoint is the actual position
+            text.position = text.alignmentPoint;
         }
 
         return text;
@@ -737,7 +801,8 @@ export class DxfParser {
             layer: '0',
             position: { x: 0, y: 0 },
             text: '',
-            height: 1
+            height: 1,
+            attachmentPoint: 1  // Default: top-left
         };
 
         while (this.pos < this.lines.length) {
@@ -771,8 +836,15 @@ export class DxfParser {
                 case 40:
                     text.height = parseFloat(this.groupValue);
                     break;
+                case 41:
+                    text.width = parseFloat(this.groupValue);
+                    break;
                 case 50:
                     text.rotation = parseFloat(this.groupValue);
+                    break;
+                case 71:
+                    // Attachment point: 1=TL, 2=TC, 3=TR, 4=ML, 5=MC, 6=MR, 7=BL, 8=BC, 9=BR
+                    text.attachmentPoint = parseInt(this.groupValue, 10);
                     break;
             }
         }
@@ -784,12 +856,34 @@ export class DxfParser {
     }
 
     private stripMTextFormatting(text: string): string {
-        // Remove common MTEXT formatting codes
-        return text
-            .replace(/\\[A-Za-z][^;]*;/g, '') // \A1; alignment, \H1; height, etc.
-            .replace(/\\P/g, '\n')             // Paragraph break
-            .replace(/\{|\}/g, '')             // Braces
-            .replace(/\\/g, '');               // Remaining backslashes
+        // Remove common MTEXT formatting codes while preserving Korean/Unicode text
+        let result = text
+            // Handle Unicode escape sequences (\U+XXXX or \u+XXXX)
+            .replace(/\\[Uu]\+([0-9A-Fa-f]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+            // Handle font changes like {\fArial;text}
+            .replace(/\{\\f[^;]*;([^}]*)\}/g, '$1')
+            // Handle color changes like {\C1;text}
+            .replace(/\{\\[Cc]\d+;([^}]*)\}/g, '$1')
+            // Remove formatting codes: \A (alignment), \H (height), \W (width), \Q (oblique), \T (tracking), \L (underline), \O (overline), \K (strikethrough), \S (stacked text)
+            .replace(/\\[AHWQTLOKSachwqtloks][^;]*;/g, '')
+            // Handle paragraph breaks
+            .replace(/\\[Pp]/g, '\n')
+            // Handle special characters
+            .replace(/\\~/g, ' ')              // Non-breaking space
+            .replace(/%%[dDcC]/g, '°')         // Degree symbol
+            .replace(/%%[pP]/g, '±')           // Plus/minus
+            .replace(/%%[uU]/g, '')            // Underline toggle (remove)
+            .replace(/%%[oO]/g, '')            // Overline toggle (remove)
+            // Remove remaining formatting braces
+            .replace(/\{|\}/g, '')
+            // Handle escaped backslashes (double backslash -> single)
+            .replace(/\\\\/g, '\\');
+
+        // Remove remaining isolated backslash formatting codes but NOT actual backslash characters in text
+        // Only remove \X patterns where X is a formatting letter
+        result = result.replace(/\\[ACFHLOPQSTWacfhlopqstw]/g, '');
+
+        return result;
     }
 
     private parsePoint(): DxfPoint_ {
@@ -1157,6 +1251,181 @@ export class DxfParser {
         return dimension;
     }
 
+    private parseSolid(entityType: string): DxfSolid {
+        const solid: DxfSolid = {
+            type: entityType as 'SOLID' | '3DFACE',
+            layer: '0',
+            points: [
+                { x: 0, y: 0 },
+                { x: 0, y: 0 },
+                { x: 0, y: 0 },
+                { x: 0, y: 0 }
+            ]
+        };
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    solid.handle = this.groupValue;
+                    break;
+                case 8:
+                    solid.layer = this.groupValue;
+                    break;
+                case 62:
+                    solid.color = parseInt(this.groupValue, 10);
+                    break;
+                case 10:
+                    solid.points[0].x = parseFloat(this.groupValue);
+                    break;
+                case 20:
+                    solid.points[0].y = parseFloat(this.groupValue);
+                    break;
+                case 11:
+                    solid.points[1].x = parseFloat(this.groupValue);
+                    break;
+                case 21:
+                    solid.points[1].y = parseFloat(this.groupValue);
+                    break;
+                case 12:
+                    solid.points[2].x = parseFloat(this.groupValue);
+                    break;
+                case 22:
+                    solid.points[2].y = parseFloat(this.groupValue);
+                    break;
+                case 13:
+                    solid.points[3].x = parseFloat(this.groupValue);
+                    break;
+                case 23:
+                    solid.points[3].y = parseFloat(this.groupValue);
+                    break;
+            }
+        }
+
+        return solid;
+    }
+
+    private parseAttrib(entityType: string): DxfAttrib {
+        const attrib: DxfAttrib = {
+            type: entityType as 'ATTRIB' | 'ATTDEF',
+            layer: '0',
+            position: { x: 0, y: 0 },
+            text: '',
+            tag: '',
+            height: 1,
+            horizontalAlignment: 0,
+            verticalAlignment: 0
+        };
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    attrib.handle = this.groupValue;
+                    break;
+                case 8:
+                    attrib.layer = this.groupValue;
+                    break;
+                case 62:
+                    attrib.color = parseInt(this.groupValue, 10);
+                    break;
+                case 1:
+                    attrib.text = this.groupValue;
+                    break;
+                case 2:
+                    attrib.tag = this.groupValue;
+                    break;
+                case 10:
+                    attrib.position.x = parseFloat(this.groupValue);
+                    break;
+                case 20:
+                    attrib.position.y = parseFloat(this.groupValue);
+                    break;
+                case 40:
+                    attrib.height = parseFloat(this.groupValue);
+                    break;
+                case 50:
+                    attrib.rotation = parseFloat(this.groupValue);
+                    break;
+                case 72:
+                    attrib.horizontalAlignment = parseInt(this.groupValue, 10);
+                    break;
+                case 74:
+                    attrib.verticalAlignment = parseInt(this.groupValue, 10);
+                    break;
+            }
+        }
+
+        return attrib;
+    }
+
+    private parseLeader(): DxfLeader {
+        const leader: DxfLeader = {
+            type: 'LEADER',
+            layer: '0',
+            vertices: [],
+            hasArrowhead: true,
+            annotationType: 0
+        };
+
+        let currentVertex: DxfPoint | null = null;
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                if (currentVertex) {
+                    leader.vertices.push(currentVertex);
+                }
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    leader.handle = this.groupValue;
+                    break;
+                case 8:
+                    leader.layer = this.groupValue;
+                    break;
+                case 62:
+                    leader.color = parseInt(this.groupValue, 10);
+                    break;
+                case 71:
+                    leader.hasArrowhead = parseInt(this.groupValue, 10) === 1;
+                    break;
+                case 73:
+                    leader.annotationType = parseInt(this.groupValue, 10);
+                    break;
+                case 10:
+                    if (currentVertex) {
+                        leader.vertices.push(currentVertex);
+                    }
+                    currentVertex = { x: parseFloat(this.groupValue), y: 0 };
+                    break;
+                case 20:
+                    if (currentVertex) {
+                        currentVertex.y = parseFloat(this.groupValue);
+                    }
+                    break;
+            }
+        }
+
+        return leader;
+    }
+
     private skipEntity(): void {
         while (this.pos < this.lines.length) {
             this.readGroup();
@@ -1256,6 +1525,27 @@ export class DxfParser {
                     const dimension = entity as DxfDimension;
                     updateBounds(dimension.definitionPoint.x, dimension.definitionPoint.y);
                     updateBounds(dimension.middlePoint.x, dimension.middlePoint.y);
+                    break;
+                }
+                case 'SOLID':
+                case '3DFACE': {
+                    const solid = entity as DxfSolid;
+                    for (const point of solid.points) {
+                        updateBounds(point.x, point.y);
+                    }
+                    break;
+                }
+                case 'ATTRIB':
+                case 'ATTDEF': {
+                    const attrib = entity as DxfAttrib;
+                    updateBounds(attrib.position.x, attrib.position.y);
+                    break;
+                }
+                case 'LEADER': {
+                    const leader = entity as DxfLeader;
+                    for (const vertex of leader.vertices) {
+                        updateBounds(vertex.x, vertex.y);
+                    }
                     break;
                 }
             }

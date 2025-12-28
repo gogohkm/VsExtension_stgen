@@ -91,7 +91,7 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private async loadDxfFile(uri: vscode.Uri, webviewPanel: vscode.WebviewPanel): Promise<void> {
         try {
             const fileData = await vscode.workspace.fs.readFile(uri);
-            const text = new TextDecoder('utf-8').decode(fileData);
+            const text = this.decodeWithAutoDetect(fileData);
 
             webviewPanel.webview.postMessage({
                 type: 'loadDxf',
@@ -101,6 +101,90 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to load DXF file: ${error}`);
         }
+    }
+
+    private decodeWithAutoDetect(data: Uint8Array): string {
+        // First, try to detect encoding from $DWGCODEPAGE in the DXF header
+        const asciiPreview = new TextDecoder('ascii', { fatal: false }).decode(data.slice(0, 5000));
+
+        // Check for $DWGCODEPAGE setting
+        const codepageMatch = asciiPreview.match(/\$DWGCODEPAGE[\s\S]*?\n\s*3\s*\n([^\n]+)/i);
+        if (codepageMatch) {
+            const codepage = codepageMatch[1].trim().toUpperCase();
+
+            // Map AutoCAD codepages to JavaScript TextDecoder encodings
+            const encodingMap: Record<string, string> = {
+                'ANSI_949': 'euc-kr',      // Korean
+                'ANSI_936': 'gb2312',      // Simplified Chinese
+                'ANSI_950': 'big5',        // Traditional Chinese
+                'ANSI_932': 'shift-jis',   // Japanese
+                'ANSI_1252': 'windows-1252', // Western European
+                'ANSI_1251': 'windows-1251', // Cyrillic
+                'UTF-8': 'utf-8',
+                'UTF8': 'utf-8'
+            };
+
+            const encoding = encodingMap[codepage];
+            if (encoding) {
+                try {
+                    return new TextDecoder(encoding).decode(data);
+                } catch (e) {
+                    // Fall through to auto-detection
+                }
+            }
+        }
+
+        // Try UTF-8 first
+        const utf8Text = new TextDecoder('utf-8', { fatal: false }).decode(data);
+
+        // Check if UTF-8 decode produced replacement characters or high-byte sequences
+        // that indicate wrong encoding
+        const replacementCount = (utf8Text.match(/\uFFFD/g) || []).length;
+
+        // Also check for broken Korean patterns (EUC-KR bytes decoded as UTF-8)
+        // EUC-KR Korean characters are in range 0xB0-0xC8 for first byte
+        const hasBrokenKorean = this.detectBrokenKoreanEncoding(data);
+
+        // If there are replacement characters OR broken Korean patterns, try EUC-KR
+        if (replacementCount > 0 || hasBrokenKorean) {
+            try {
+                const eucKrText = new TextDecoder('euc-kr').decode(data);
+                // Check if EUC-KR produces valid Korean text
+                const hasKorean = /[\uAC00-\uD7AF]/.test(eucKrText);
+                const eucKrReplacements = (eucKrText.match(/\uFFFD/g) || []).length;
+
+                // Prefer EUC-KR if it has Korean characters and fewer/equal replacements
+                if (hasKorean && eucKrReplacements <= replacementCount) {
+                    return eucKrText;
+                }
+            } catch (e) {
+                // Fall through
+            }
+        }
+
+        // Default to UTF-8
+        return utf8Text;
+    }
+
+    private detectBrokenKoreanEncoding(data: Uint8Array): boolean {
+        // Check for EUC-KR byte patterns that indicate Korean text
+        // EUC-KR Korean characters: first byte 0xB0-0xC8, second byte 0xA1-0xFE
+        let consecutiveHighBytes = 0;
+        for (let i = 0; i < Math.min(data.length, 10000); i++) {
+            const byte = data[i];
+            if (byte >= 0xB0 && byte <= 0xC8) {
+                if (i + 1 < data.length) {
+                    const nextByte = data[i + 1];
+                    if (nextByte >= 0xA1 && nextByte <= 0xFE) {
+                        consecutiveHighBytes++;
+                        if (consecutiveHighBytes >= 3) {
+                            return true; // Likely EUC-KR encoded Korean text
+                        }
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private handleMessage(

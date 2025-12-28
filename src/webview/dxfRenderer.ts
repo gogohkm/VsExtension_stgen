@@ -17,7 +17,10 @@ import {
     DxfEllipse,
     DxfSpline,
     DxfHatch,
-    DxfDimension
+    DxfDimension,
+    DxfSolid,
+    DxfAttrib,
+    DxfLeader
 } from './dxfParser';
 
 // AutoCAD Color Index (ACI) to RGB - Full 256 color palette
@@ -283,6 +286,14 @@ export class DxfRenderer {
                 return this.renderHatch(entity as DxfHatch, color);
             case 'DIMENSION':
                 return this.renderDimension(entity as DxfDimension, color);
+            case 'SOLID':
+            case '3DFACE':
+                return this.renderSolid(entity as DxfSolid, color);
+            case 'ATTRIB':
+            case 'ATTDEF':
+                return this.renderAttrib(entity as DxfAttrib, color);
+            case 'LEADER':
+                return this.renderLeader(entity as DxfLeader, color);
             default:
                 return null;
         }
@@ -375,24 +386,29 @@ export class DxfRenderer {
         return new THREE.Line(geometry, material);
     }
 
+    // Font stack that supports Korean, Japanese, Chinese and Western characters
+    private static readonly FONT_FAMILY = '"Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans KR", "NanumGothic", "나눔고딕", "Dotum", "돋움", "Gulim", "굴림", "Microsoft YaHei", "SimSun", "Meiryo", "MS Gothic", Arial, sans-serif';
+
     private renderText(text: DxfText, color: number): THREE.Sprite {
         // Create text sprite using canvas
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d')!;
 
         const fontSize = 64;
-        context.font = `${fontSize}px Arial`;
+        const fontFamily = DxfRenderer.FONT_FAMILY;
+        context.font = `${fontSize}px ${fontFamily}`;
         const metrics = context.measureText(text.text);
 
-        canvas.width = Math.ceil(metrics.width) + 20;
+        // Ensure minimum width for empty or very short text
+        canvas.width = Math.max(Math.ceil(metrics.width) + 20, 40);
         canvas.height = fontSize + 20;
 
         // Clear with transparent background
         context.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Draw text
+        // Draw text with Korean-supporting font
         context.fillStyle = '#' + color.toString(16).padStart(6, '0');
-        context.font = `${fontSize}px Arial`;
+        context.font = `${fontSize}px ${fontFamily}`;
         context.textBaseline = 'top';
         context.fillText(text.text, 10, 10);
 
@@ -404,8 +420,72 @@ export class DxfRenderer {
 
         // Scale sprite to match DXF text height
         const scale = text.height / fontSize * canvas.height;
-        sprite.scale.set(scale * canvas.width / canvas.height, scale, 1);
-        sprite.position.set(text.position.x, text.position.y, 0);
+        const spriteWidth = scale * canvas.width / canvas.height;
+        const spriteHeight = scale;
+        sprite.scale.set(spriteWidth, spriteHeight, 1);
+
+        // Calculate position with alignment offset
+        let posX = text.position.x;
+        let posY = text.position.y;
+
+        if (text.type === 'MTEXT' && text.attachmentPoint) {
+            // MTEXT attachment points: 1=TL, 2=TC, 3=TR, 4=ML, 5=MC, 6=MR, 7=BL, 8=BC, 9=BR
+            const ap = text.attachmentPoint;
+
+            // Horizontal offset
+            if (ap === 1 || ap === 4 || ap === 7) {
+                // Left - offset to center (sprite center is at position)
+                posX += spriteWidth / 2;
+            } else if (ap === 3 || ap === 6 || ap === 9) {
+                // Right
+                posX -= spriteWidth / 2;
+            }
+            // Center (2, 5, 8) - no horizontal offset needed
+
+            // Vertical offset
+            if (ap === 1 || ap === 2 || ap === 3) {
+                // Top
+                posY -= spriteHeight / 2;
+            } else if (ap === 7 || ap === 8 || ap === 9) {
+                // Bottom
+                posY += spriteHeight / 2;
+            }
+            // Middle (4, 5, 6) - no vertical offset needed
+        } else if (text.type === 'TEXT') {
+            // TEXT alignment
+            const hAlign = text.horizontalAlignment || 0;
+            const vAlign = text.verticalAlignment || 0;
+
+            // Horizontal alignment: 0=Left, 1=Center, 2=Right, 3=Aligned, 4=Middle, 5=Fit
+            if (hAlign === 0) {
+                // Left - sprite center should be offset right
+                posX += spriteWidth / 2;
+            } else if (hAlign === 2) {
+                // Right
+                posX -= spriteWidth / 2;
+            }
+            // Center (1), Middle (4) - no horizontal offset
+
+            // Vertical alignment: 0=Baseline, 1=Bottom, 2=Middle, 3=Top
+            if (vAlign === 0) {
+                // Baseline - approximately 20% up from bottom
+                posY += spriteHeight * 0.3;
+            } else if (vAlign === 1) {
+                // Bottom
+                posY += spriteHeight / 2;
+            } else if (vAlign === 3) {
+                // Top
+                posY -= spriteHeight / 2;
+            }
+            // Middle (2) - no vertical offset
+        }
+
+        sprite.position.set(posX, posY, 0);
+
+        // Apply rotation if specified
+        if (text.rotation) {
+            sprite.material.rotation = text.rotation * Math.PI / 180;
+        }
 
         return sprite;
     }
@@ -628,15 +708,16 @@ export class DxfRenderer {
             const context = canvas.getContext('2d')!;
 
             const fontSize = 32;
-            context.font = `${fontSize}px Arial`;
+            const fontFamily = DxfRenderer.FONT_FAMILY;
+            context.font = `${fontSize}px ${fontFamily}`;
             const metrics = context.measureText(dimension.text);
 
-            canvas.width = Math.ceil(metrics.width) + 10;
+            canvas.width = Math.max(Math.ceil(metrics.width) + 10, 30);
             canvas.height = fontSize + 10;
 
             context.clearRect(0, 0, canvas.width, canvas.height);
             context.fillStyle = '#' + color.toString(16).padStart(6, '0');
-            context.font = `${fontSize}px Arial`;
+            context.font = `${fontSize}px ${fontFamily}`;
             context.textBaseline = 'top';
             context.fillText(dimension.text, 5, 5);
 
@@ -654,6 +735,185 @@ export class DxfRenderer {
             sprite.scale.set(scale * canvas.width / canvas.height, scale, 1);
             sprite.position.set(dimension.middlePoint.x, dimension.middlePoint.y, 0);
             group.add(sprite);
+        }
+
+        return group;
+    }
+
+    private renderSolid(solid: DxfSolid, color: number): THREE.Mesh | THREE.Group {
+        const group = new THREE.Group();
+
+        // SOLID has a special vertex order: 0, 1, 3, 2 (not 0, 1, 2, 3)
+        // This is a quirk of the DXF format
+        const p0 = solid.points[0];
+        const p1 = solid.points[1];
+        const p2 = solid.points[2];
+        const p3 = solid.points[3];
+
+        // Check if it's a triangle (p2 and p3 are the same) or quadrilateral
+        const isTriangle = (p2.x === p3.x && p2.y === p3.y);
+
+        try {
+            const shape = new THREE.Shape();
+            shape.moveTo(p0.x, p0.y);
+            shape.lineTo(p1.x, p1.y);
+            if (isTriangle) {
+                shape.lineTo(p2.x, p2.y);
+            } else {
+                // Quadrilateral: use order 0, 1, 3, 2
+                shape.lineTo(p3.x, p3.y);
+                shape.lineTo(p2.x, p2.y);
+            }
+            shape.closePath();
+
+            const geometry = new THREE.ShapeGeometry(shape);
+            const material = new THREE.MeshBasicMaterial({
+                color,
+                side: THREE.DoubleSide
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            group.add(mesh);
+
+            // Also draw outline
+            const outlinePoints = isTriangle
+                ? [
+                    new THREE.Vector3(p0.x, p0.y, 0.01),
+                    new THREE.Vector3(p1.x, p1.y, 0.01),
+                    new THREE.Vector3(p2.x, p2.y, 0.01),
+                    new THREE.Vector3(p0.x, p0.y, 0.01)
+                ]
+                : [
+                    new THREE.Vector3(p0.x, p0.y, 0.01),
+                    new THREE.Vector3(p1.x, p1.y, 0.01),
+                    new THREE.Vector3(p3.x, p3.y, 0.01),
+                    new THREE.Vector3(p2.x, p2.y, 0.01),
+                    new THREE.Vector3(p0.x, p0.y, 0.01)
+                ];
+
+            const outlineGeometry = new THREE.BufferGeometry().setFromPoints(outlinePoints);
+            const outlineMaterial = new THREE.LineBasicMaterial({ color });
+            group.add(new THREE.Line(outlineGeometry, outlineMaterial));
+
+        } catch (e) {
+            // Fallback to just outline if shape fails
+            const points = [
+                new THREE.Vector3(p0.x, p0.y, 0),
+                new THREE.Vector3(p1.x, p1.y, 0),
+                new THREE.Vector3(p3.x, p3.y, 0),
+                new THREE.Vector3(p2.x, p2.y, 0),
+                new THREE.Vector3(p0.x, p0.y, 0)
+            ];
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({ color });
+            group.add(new THREE.Line(geometry, material));
+        }
+
+        return group;
+    }
+
+    private renderAttrib(attrib: DxfAttrib, color: number): THREE.Sprite {
+        // Render ATTRIB/ATTDEF similar to TEXT
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d')!;
+
+        const fontSize = 64;
+        const fontFamily = DxfRenderer.FONT_FAMILY;
+        context.font = `${fontSize}px ${fontFamily}`;
+        const displayText = attrib.text || attrib.tag || '';
+        const metrics = context.measureText(displayText);
+
+        canvas.width = Math.max(Math.ceil(metrics.width) + 20, 40);
+        canvas.height = fontSize + 20;
+
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = '#' + color.toString(16).padStart(6, '0');
+        context.font = `${fontSize}px ${fontFamily}`;
+        context.textBaseline = 'top';
+        context.fillText(displayText, 10, 10);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const sprite = new THREE.Sprite(material);
+
+        const scale = attrib.height / fontSize * canvas.height;
+        const spriteWidth = scale * canvas.width / canvas.height;
+        const spriteHeight = scale;
+        sprite.scale.set(spriteWidth, spriteHeight, 1);
+
+        // Apply alignment
+        let posX = attrib.position.x;
+        let posY = attrib.position.y;
+        const hAlign = attrib.horizontalAlignment || 0;
+        const vAlign = attrib.verticalAlignment || 0;
+
+        if (hAlign === 0) {
+            posX += spriteWidth / 2;
+        } else if (hAlign === 2) {
+            posX -= spriteWidth / 2;
+        }
+
+        if (vAlign === 0) {
+            posY += spriteHeight * 0.3;
+        } else if (vAlign === 1) {
+            posY += spriteHeight / 2;
+        } else if (vAlign === 3) {
+            posY -= spriteHeight / 2;
+        }
+
+        sprite.position.set(posX, posY, 0);
+
+        if (attrib.rotation) {
+            sprite.material.rotation = attrib.rotation * Math.PI / 180;
+        }
+
+        return sprite;
+    }
+
+    private renderLeader(leader: DxfLeader, color: number): THREE.Group {
+        const group = new THREE.Group();
+
+        if (leader.vertices.length < 2) {
+            return group;
+        }
+
+        // Draw leader line
+        const points = leader.vertices.map(v => new THREE.Vector3(v.x, v.y, 0));
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+        const lineMaterial = new THREE.LineBasicMaterial({ color });
+        group.add(new THREE.Line(lineGeometry, lineMaterial));
+
+        // Draw arrowhead if enabled
+        if (leader.hasArrowhead && leader.vertices.length >= 2) {
+            const start = leader.vertices[0];
+            const next = leader.vertices[1];
+
+            const dx = next.x - start.x;
+            const dy = next.y - start.y;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const arrowSize = Math.min(length * 0.15, 5);
+
+            if (arrowSize > 0.1) {
+                const angle = Math.atan2(dy, dx);
+                const arrowAngle = Math.PI / 6;
+
+                const arrowPoints = [
+                    new THREE.Vector3(
+                        start.x + arrowSize * Math.cos(angle - arrowAngle),
+                        start.y + arrowSize * Math.sin(angle - arrowAngle),
+                        0
+                    ),
+                    new THREE.Vector3(start.x, start.y, 0),
+                    new THREE.Vector3(
+                        start.x + arrowSize * Math.cos(angle + arrowAngle),
+                        start.y + arrowSize * Math.sin(angle + arrowAngle),
+                        0
+                    )
+                ];
+
+                const arrowGeometry = new THREE.BufferGeometry().setFromPoints(arrowPoints);
+                group.add(new THREE.Line(arrowGeometry, lineMaterial));
+            }
         }
 
         return group;

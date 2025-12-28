@@ -157,17 +157,21 @@ export class AnnotationManager {
         }
     }
 
+    // Font stack that supports Korean, Japanese, Chinese and Western characters
+    private static readonly FONT_FAMILY = '"Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans KR", "NanumGothic", "나눔고딕", "Dotum", "돋움", "Gulim", "굴림", "Microsoft YaHei", "SimSun", "Meiryo", "MS Gothic", Arial, sans-serif';
+
     private createTextAnnotation(x: number, y: number, text: string, color: number): THREE.Sprite {
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d')!;
 
         const fontSize = 48;
         const padding = 10;
+        const fontFamily = AnnotationManager.FONT_FAMILY;
 
-        context.font = `bold ${fontSize}px Arial`;
+        context.font = `bold ${fontSize}px ${fontFamily}`;
         const metrics = context.measureText(text);
 
-        canvas.width = Math.ceil(metrics.width) + padding * 2;
+        canvas.width = Math.max(Math.ceil(metrics.width) + padding * 2, 50);
         canvas.height = fontSize + padding * 2;
 
         // Draw background
@@ -179,9 +183,9 @@ export class AnnotationManager {
         context.lineWidth = 2;
         context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
 
-        // Draw text
+        // Draw text with Korean-supporting font
         context.fillStyle = '#' + color.toString(16).padStart(6, '0');
-        context.font = `bold ${fontSize}px Arial`;
+        context.font = `bold ${fontSize}px ${fontFamily}`;
         context.textBaseline = 'top';
         context.fillText(text, padding, padding);
 
