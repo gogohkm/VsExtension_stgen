@@ -88,6 +88,16 @@
           "type": "string",
           "default": "#ff0000",
           "description": "Default color for annotations"
+        },
+        "stgen.autoExportForClaude": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically export DXF context for Claude Code when a file is opened"
+        },
+        "stgen.mcpServerPort": {
+          "type": "number",
+          "default": 52789,
+          "description": "Port for MCP bridge HTTP server"
         }
       }
     }
@@ -95,6 +105,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile && npm run build:webview",
     "compile": "tsc -p ./",
+    "compile:mcp": "tsc -p ./tsconfig.mcp.json",
     "watch": "tsc -watch -p ./",
     "build:webview": "webpack --mode production",
     "watch:webview": "webpack --mode development --watch",
@@ -103,7 +114,9 @@
     "test": "vscode-test"
   },
   "dependencies": {
-    "three": "^0.161.0"
+    "three": "^0.161.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.22.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.107.0",

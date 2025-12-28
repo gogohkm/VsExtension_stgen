@@ -1687,6 +1687,14 @@ export class DxfRenderer {
         this.renderer.dispose();
     }
 
+    getWidth(): number {
+        return this.container.clientWidth;
+    }
+
+    getHeight(): number {
+        return this.container.clientHeight;
+    }
+
     // ========== Box Zoom ==========
 
     private zoomToBox(): void {

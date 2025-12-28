@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "stgen-dxf-viewer": {
+      "command": "node",
+      "args": ["/Users/hi/2026Coding_Prj/VscodeExtensions/stgen/out/mcp/server.js"],
+      "env": {
+        "STGEN_MCP_PORT": "52789"
+      }
+    }
+  }
+}

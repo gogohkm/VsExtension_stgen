@@ -590,6 +590,19 @@ class DxfViewerApp {
             case 'loadAnnotations':
                 this.loadAnnotations(message.data);
                 break;
+            // MCP Bridge requests
+            case 'mcp_capture':
+                this.handleMcpCapture(message.requestId);
+                break;
+            case 'mcp_entities':
+                this.handleMcpEntities(message.requestId, message.options);
+                break;
+            case 'mcp_layers':
+                this.handleMcpLayers(message.requestId);
+                break;
+            case 'mcp_summary':
+                this.handleMcpSummary(message.requestId);
+                break;
         }
     }
 
@@ -859,6 +872,220 @@ class DxfViewerApp {
         if (status) {
             status.textContent = text;
         }
+    }
+
+    // --- MCP Bridge Handlers ---
+
+    private handleMcpCapture(requestId: string): void {
+        if (!this.renderer) {
+            this.sendMcpResponse(requestId, { error: 'Renderer not initialized' });
+            return;
+        }
+
+        const dataUrl = this.renderer.captureImage();
+        // Extract base64 data from data URL
+        const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+
+        this.sendMcpResponse(requestId, {
+            imageData: base64Data,
+            width: this.renderer.getWidth(),
+            height: this.renderer.getHeight()
+        });
+    }
+
+    private handleMcpEntities(requestId: string, options: { format?: string; limit?: number; layers?: string[]; types?: string[] }): void {
+        if (!this.parsedDxf) {
+            this.sendMcpResponse(requestId, { error: 'No DXF file loaded' });
+            return;
+        }
+
+        const format = options?.format || 'markdown';
+        const limit = options?.limit || 100;
+        const layers = options?.layers;
+        const types = options?.types;
+
+        // Filter entities
+        let entities = this.parsedDxf.entities;
+
+        if (layers && layers.length > 0) {
+            entities = entities.filter(e => layers.includes(e.layer));
+        }
+
+        if (types && types.length > 0) {
+            entities = entities.filter(e => types.includes(e.type));
+        }
+
+        // Apply limit
+        const limitedEntities = entities.slice(0, limit);
+
+        let data: string;
+
+        if (format === 'json') {
+            data = JSON.stringify({
+                fileName: this.fileName,
+                totalCount: entities.length,
+                returnedCount: limitedEntities.length,
+                entities: limitedEntities.map(e => this.entityToJson(e))
+            }, null, 2);
+        } else if (format === 'summary') {
+            data = this.formatEntitiesSummary(entities);
+        } else {
+            // markdown format
+            data = this.formatEntitiesMarkdown(limitedEntities, entities.length);
+        }
+
+        this.sendMcpResponse(requestId, { data });
+    }
+
+    private handleMcpLayers(requestId: string): void {
+        if (!this.renderer) {
+            this.sendMcpResponse(requestId, { error: 'Renderer not initialized' });
+            return;
+        }
+
+        const layers = this.renderer.getLayers();
+        this.sendMcpResponse(requestId, {
+            layers: layers.map(l => ({
+                name: l.name,
+                visible: l.visible,
+                color: '#' + l.color.toString(16).padStart(6, '0'),
+                entityCount: l.entityCount
+            }))
+        });
+    }
+
+    private handleMcpSummary(requestId: string): void {
+        if (!this.parsedDxf) {
+            this.sendMcpResponse(requestId, { error: 'No DXF file loaded' });
+            return;
+        }
+
+        // Count entities by type
+        const typeCounts: Record<string, number> = {};
+        for (const entity of this.parsedDxf.entities) {
+            typeCounts[entity.type] = (typeCounts[entity.type] || 0) + 1;
+        }
+
+        // Get layer names
+        const layerNames = Array.from(this.parsedDxf.layers.keys());
+
+        // Get block names
+        const blockNames = Array.from(this.parsedDxf.blocks.keys());
+
+        this.sendMcpResponse(requestId, {
+            entityCount: this.parsedDxf.entities.length,
+            layerCount: this.parsedDxf.layers.size,
+            blockCount: this.parsedDxf.blocks.size,
+            bounds: {
+                minX: this.parsedDxf.bounds.minX,
+                minY: this.parsedDxf.bounds.minY,
+                maxX: this.parsedDxf.bounds.maxX,
+                maxY: this.parsedDxf.bounds.maxY,
+                width: this.parsedDxf.bounds.maxX - this.parsedDxf.bounds.minX,
+                height: this.parsedDxf.bounds.maxY - this.parsedDxf.bounds.minY
+            },
+            entityTypes: typeCounts,
+            layers: layerNames,
+            blocks: blockNames
+        });
+    }
+
+    private sendMcpResponse(requestId: string, data: any): void {
+        this.vscode.postMessage({
+            type: 'mcp_response',
+            requestId: requestId,
+            data: data
+        });
+    }
+
+    private entityToJson(entity: DxfEntity): any {
+        const base = {
+            type: entity.type,
+            layer: entity.layer,
+            handle: entity.handle,
+            lineType: entity.lineType
+        };
+
+        switch (entity.type) {
+            case 'LINE': {
+                const line = entity as DxfLine;
+                return { ...base, start: line.start, end: line.end };
+            }
+            case 'CIRCLE': {
+                const circle = entity as DxfCircle;
+                return { ...base, center: circle.center, radius: circle.radius };
+            }
+            case 'ARC': {
+                const arc = entity as DxfArc;
+                return { ...base, center: arc.center, radius: arc.radius, startAngle: arc.startAngle, endAngle: arc.endAngle };
+            }
+            case 'POLYLINE':
+            case 'LWPOLYLINE': {
+                const poly = entity as DxfPolyline;
+                return { ...base, vertices: poly.vertices, closed: poly.closed };
+            }
+            case 'TEXT':
+            case 'MTEXT': {
+                const text = entity as DxfText;
+                return { ...base, position: text.position, text: text.text, height: text.height, rotation: text.rotation };
+            }
+            default:
+                return base;
+        }
+    }
+
+    private formatEntitiesSummary(entities: DxfEntity[]): string {
+        const lines: string[] = [];
+
+        lines.push(`# DXF Summary: ${this.fileName}`);
+        lines.push('');
+        lines.push(`Total entities: ${entities.length}`);
+        lines.push('');
+
+        // Count by type
+        const typeCounts = new Map<string, number>();
+        for (const entity of entities) {
+            typeCounts.set(entity.type, (typeCounts.get(entity.type) || 0) + 1);
+        }
+
+        lines.push('## Entity counts by type:');
+        for (const [type, count] of Array.from(typeCounts.entries()).sort((a, b) => b[1] - a[1])) {
+            lines.push(`- ${type}: ${count}`);
+        }
+
+        // Count by layer
+        const layerCounts = new Map<string, number>();
+        for (const entity of entities) {
+            layerCounts.set(entity.layer, (layerCounts.get(entity.layer) || 0) + 1);
+        }
+
+        lines.push('');
+        lines.push('## Entity counts by layer:');
+        for (const [layer, count] of Array.from(layerCounts.entries()).sort((a, b) => b[1] - a[1])) {
+            lines.push(`- ${layer}: ${count}`);
+        }
+
+        return lines.join('\n');
+    }
+
+    private formatEntitiesMarkdown(entities: DxfEntity[], totalCount: number): string {
+        const lines: string[] = [];
+
+        lines.push(`# DXF Entities: ${this.fileName}`);
+        lines.push('');
+        lines.push(`Showing ${entities.length} of ${totalCount} entities`);
+        lines.push('');
+
+        for (const entity of entities) {
+            lines.push(this.formatEntityDetail(entity));
+        }
+
+        if (entities.length < totalCount) {
+            lines.push('');
+            lines.push(`... and ${totalCount - entities.length} more entities`);
+        }
+
+        return lines.join('\n');
     }
 }
 

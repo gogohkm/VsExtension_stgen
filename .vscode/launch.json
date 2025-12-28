@@ -10,7 +10,8 @@
 			"type": "extensionHost",
 			"request": "launch",
 			"args": [
-				"--extensionDevelopmentPath=${workspaceFolder}"
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				 "//Users/hi/2026Coding_Prj/VscodeExtensions/stgen/dxf_sample"  // 테스트할 폴더 경로
 			],
 			"outFiles": [
 				"${workspaceFolder}/out/**/*.js"

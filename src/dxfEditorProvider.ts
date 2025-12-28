@@ -1,13 +1,19 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import type { McpBridgeServer } from './mcp/bridge';
 
 export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
     public static readonly viewType = 'stgen.dxfViewer';
 
     private static activeWebview: vscode.WebviewPanel | undefined;
+    private static mcpBridge: McpBridgeServer | null = null;
 
     constructor(private readonly context: vscode.ExtensionContext) {}
+
+    public static setMcpBridge(bridge: McpBridgeServer): void {
+        this.mcpBridge = bridge;
+    }
 
     public static register(context: vscode.ExtensionContext): vscode.Disposable {
         const provider = new DxfEditorProvider(context);
@@ -92,12 +98,18 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         try {
             const fileData = await vscode.workspace.fs.readFile(uri);
             const text = this.decodeWithAutoDetect(fileData);
+            const fileName = path.basename(uri.fsPath);
 
             webviewPanel.webview.postMessage({
                 type: 'loadDxf',
                 data: text,
-                fileName: path.basename(uri.fsPath)
+                fileName: fileName
             });
+
+            // Notify MCP bridge about the loaded file
+            if (DxfEditorProvider.mcpBridge) {
+                DxfEditorProvider.mcpBridge.updateState(fileName, uri.fsPath, text);
+            }
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to load DXF file: ${error}`);
         }
@@ -210,6 +222,15 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 break;
             case 'info':
                 vscode.window.showInformationMessage(message.message);
+                break;
+            // MCP Bridge responses
+            case 'mcp_response':
+                if (DxfEditorProvider.mcpBridge && message.requestId) {
+                    DxfEditorProvider.mcpBridge.handleWebviewResponse(
+                        message.requestId,
+                        message.data
+                    );
+                }
                 break;
         }
     }

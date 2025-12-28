@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "stgen-dxf-viewer": {
+      "command": "node",
+      "args": ["./out/mcp/server.js"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "STGEN_MCP_PORT": "52789"
+      }
+    }
+  }
+}
