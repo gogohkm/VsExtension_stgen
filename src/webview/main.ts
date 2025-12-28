@@ -242,6 +242,16 @@ class DxfViewerApp {
             const parser = new DxfParser();
             this.parsedDxf = parser.parse(dxfString);
 
+            // Debug: Log block information
+            console.log(`Parsed ${this.parsedDxf.blocks.size} blocks:`);
+            for (const [name, block] of this.parsedDxf.blocks) {
+                console.log(`  Block "${name}": ${block.entities.length} entities, base=(${block.basePoint.x}, ${block.basePoint.y})`);
+            }
+
+            // Debug: Count INSERT entities
+            const insertCount = this.parsedDxf.entities.filter(e => e.type === 'INSERT').length;
+            console.log(`Found ${insertCount} INSERT entities in ENTITIES section`);
+
             if (this.renderer) {
                 this.renderer.loadDxf(this.parsedDxf);
             }
@@ -251,11 +261,12 @@ class DxfViewerApp {
 
             const entityCount = this.parsedDxf.entities.length;
             const layerCount = this.parsedDxf.layers.size;
-            this.setStatus(`Loaded: ${fileName} (${entityCount} entities, ${layerCount} layers)`);
+            const blockCount = this.parsedDxf.blocks.size;
+            this.setStatus(`Loaded: ${fileName} (${entityCount} entities, ${layerCount} layers, ${blockCount} blocks)`);
 
             this.vscode.postMessage({
                 type: 'info',
-                message: `Loaded ${fileName}: ${entityCount} entities`
+                message: `Loaded ${fileName}: ${entityCount} entities, ${blockCount} blocks, ${insertCount} inserts`
             });
 
             // Auto-load annotations if they exist

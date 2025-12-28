@@ -15,6 +15,7 @@ export interface DxfEntity {
     layer: string;
     color?: number;
     lineType?: string;
+    visible?: boolean;  // Group 60: 0=visible (default), 1=invisible
 }
 
 export interface DxfLine extends DxfEntity {
@@ -101,6 +102,7 @@ export interface DxfDimension extends DxfEntity {
     middlePoint: DxfPoint;
     text: string;
     rotation: number;
+    blockName?: string;  // Anonymous block containing dimension graphics (e.g., *D3)
 }
 
 export interface DxfSolid extends DxfEntity {
@@ -124,6 +126,12 @@ export interface DxfLeader extends DxfEntity {
     vertices: DxfPoint[];
     hasArrowhead: boolean;
     annotationType: number;  // 0=text, 1=tolerance, 2=block ref, 3=none
+}
+
+export interface DxfWipeout extends DxfEntity {
+    type: 'WIPEOUT';
+    insertionPoint: DxfPoint;
+    clipBoundary: DxfPoint[];
 }
 
 export interface DxfLayer {
@@ -151,7 +159,7 @@ export interface ParsedDxf {
     };
 }
 
-type AnyDxfEntity = DxfLine | DxfCircle | DxfArc | DxfPolyline | DxfText | DxfPoint_ | DxfInsert | DxfEllipse | DxfSpline | DxfHatch | DxfDimension | DxfSolid | DxfAttrib | DxfLeader;
+type AnyDxfEntity = DxfLine | DxfCircle | DxfArc | DxfPolyline | DxfText | DxfPoint_ | DxfInsert | DxfEllipse | DxfSpline | DxfHatch | DxfDimension | DxfSolid | DxfAttrib | DxfLeader | DxfWipeout;
 
 export class DxfParser {
     private lines: string[] = [];
@@ -426,6 +434,8 @@ export class DxfParser {
                 return this.parseAttrib(entityType);
             case 'LEADER':
                 return this.parseLeader();
+            case 'WIPEOUT':
+                return this.parseWipeout();
             default:
                 this.skipEntity();
                 return null;
@@ -487,6 +497,9 @@ export class DxfParser {
                 case 8:
                     line.layer = this.groupValue;
                     break;
+                case 60:
+                    line.visible = parseInt(this.groupValue, 10) === 0;
+                    break;
                 case 62:
                     line.color = parseInt(this.groupValue, 10);
                     break;
@@ -531,6 +544,9 @@ export class DxfParser {
                 case 8:
                     circle.layer = this.groupValue;
                     break;
+                case 60:
+                    circle.visible = parseInt(this.groupValue, 10) === 0;
+                    break;
                 case 62:
                     circle.color = parseInt(this.groupValue, 10);
                     break;
@@ -573,6 +589,9 @@ export class DxfParser {
                     break;
                 case 8:
                     arc.layer = this.groupValue;
+                    break;
+                case 60:
+                    arc.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     arc.color = parseInt(this.groupValue, 10);
@@ -625,6 +644,9 @@ export class DxfParser {
                     break;
                 case 8:
                     polyline.layer = this.groupValue;
+                    break;
+                case 60:
+                    polyline.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     polyline.color = parseInt(this.groupValue, 10);
@@ -680,6 +702,9 @@ export class DxfParser {
                         break;
                     case 8:
                         polyline.layer = this.groupValue;
+                        break;
+                    case 60:
+                        polyline.visible = parseInt(this.groupValue, 10) === 0;
                         break;
                     case 62:
                         polyline.color = parseInt(this.groupValue, 10);
@@ -744,6 +769,9 @@ export class DxfParser {
                     break;
                 case 8:
                     text.layer = this.groupValue;
+                    break;
+                case 60:
+                    text.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     text.color = parseInt(this.groupValue, 10);
@@ -819,6 +847,9 @@ export class DxfParser {
                     break;
                 case 8:
                     text.layer = this.groupValue;
+                    break;
+                case 60:
+                    text.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     text.color = parseInt(this.groupValue, 10);
@@ -908,6 +939,9 @@ export class DxfParser {
                 case 8:
                     point.layer = this.groupValue;
                     break;
+                case 60:
+                    point.visible = parseInt(this.groupValue, 10) === 0;
+                    break;
                 case 62:
                     point.color = parseInt(this.groupValue, 10);
                     break;
@@ -947,6 +981,9 @@ export class DxfParser {
                     break;
                 case 8:
                     insert.layer = this.groupValue;
+                    break;
+                case 60:
+                    insert.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     insert.color = parseInt(this.groupValue, 10);
@@ -1003,6 +1040,9 @@ export class DxfParser {
                     break;
                 case 8:
                     ellipse.layer = this.groupValue;
+                    break;
+                case 60:
+                    ellipse.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     ellipse.color = parseInt(this.groupValue, 10);
@@ -1071,6 +1111,9 @@ export class DxfParser {
                 case 8:
                     spline.layer = this.groupValue;
                     break;
+                case 60:
+                    spline.visible = parseInt(this.groupValue, 10) === 0;
+                    break;
                 case 62:
                     spline.color = parseInt(this.groupValue, 10);
                     break;
@@ -1131,8 +1174,19 @@ export class DxfParser {
 
         let currentPath: DxfPoint[] = [];
         let numBoundaryPaths = 0;
-        let numEdges = 0;
+        let boundaryType = 0;
+        let isPolylineBoundary = false;
+        let numVerticesOrEdges = 0;
+        let edgeType = 0;
         let inBoundary = false;
+        let vertexCount = 0;
+        let edgeCount = 0;
+
+        // Edge parsing state
+        let edgeStartX = 0, edgeStartY = 0;
+        let edgeCenterX = 0, edgeCenterY = 0;
+        let edgeRadius = 0;
+        let edgeStartAngle = 0, edgeEndAngle = 0;
 
         while (this.pos < this.lines.length) {
             this.readGroup();
@@ -1152,6 +1206,9 @@ export class DxfParser {
                 case 8:
                     hatch.layer = this.groupValue;
                     break;
+                case 60:
+                    hatch.visible = parseInt(this.groupValue, 10) === 0;
+                    break;
                 case 62:
                     hatch.color = parseInt(this.groupValue, 10);
                     break;
@@ -1170,29 +1227,138 @@ export class DxfParser {
                         hatch.boundaryPaths.push(currentPath);
                         currentPath = [];
                     }
+                    boundaryType = parseInt(this.groupValue, 10);
+                    // Bit 1 (value 2) indicates polyline boundary
+                    isPolylineBoundary = (boundaryType & 2) !== 0;
                     inBoundary = true;
+                    vertexCount = 0;
+                    edgeCount = 0;
+                    break;
+                case 72:
+                    if (inBoundary && !isPolylineBoundary) {
+                        // Edge type: 1=line, 2=circular arc, 3=elliptic arc, 4=spline
+                        edgeType = parseInt(this.groupValue, 10);
+                    }
+                    // For polyline boundary, 72 is "has bulge" flag - ignore
+                    break;
+                case 73:
+                    // For polyline: is closed flag (ignore)
+                    // For edges: is counterclockwise flag (ignore)
                     break;
                 case 93:
-                    numEdges = parseInt(this.groupValue, 10);
+                    numVerticesOrEdges = parseInt(this.groupValue, 10);
                     break;
                 case 10:
                     if (inBoundary) {
-                        currentPath.push({ x: parseFloat(this.groupValue), y: 0 });
+                        if (isPolylineBoundary) {
+                            // Polyline vertex
+                            currentPath.push({ x: parseFloat(this.groupValue), y: 0 });
+                            vertexCount++;
+                        } else {
+                            // Edge start point or center
+                            if (edgeType === 1) {
+                                // Line: start point
+                                edgeStartX = parseFloat(this.groupValue);
+                            } else if (edgeType === 2) {
+                                // Arc: center point
+                                edgeCenterX = parseFloat(this.groupValue);
+                            }
+                        }
                     }
                     break;
                 case 20:
-                    if (inBoundary && currentPath.length > 0) {
-                        currentPath[currentPath.length - 1].y = parseFloat(this.groupValue);
+                    if (inBoundary) {
+                        if (isPolylineBoundary && currentPath.length > 0) {
+                            currentPath[currentPath.length - 1].y = parseFloat(this.groupValue);
+                        } else if (!isPolylineBoundary) {
+                            if (edgeType === 1) {
+                                edgeStartY = parseFloat(this.groupValue);
+                                currentPath.push({ x: edgeStartX, y: edgeStartY });
+                            } else if (edgeType === 2) {
+                                edgeCenterY = parseFloat(this.groupValue);
+                            }
+                        }
+                    }
+                    break;
+                case 11:
+                    if (inBoundary && !isPolylineBoundary && edgeType === 1) {
+                        // Line end point X
+                        edgeStartX = parseFloat(this.groupValue);
+                    }
+                    break;
+                case 21:
+                    if (inBoundary && !isPolylineBoundary && edgeType === 1) {
+                        // Line end point Y
+                        edgeStartY = parseFloat(this.groupValue);
+                        currentPath.push({ x: edgeStartX, y: edgeStartY });
+                        edgeCount++;
+                    }
+                    break;
+                case 40:
+                    if (inBoundary && !isPolylineBoundary && edgeType === 2) {
+                        // Arc radius
+                        edgeRadius = parseFloat(this.groupValue);
+                    }
+                    break;
+                case 50:
+                    if (inBoundary && !isPolylineBoundary && edgeType === 2) {
+                        // Arc start angle
+                        edgeStartAngle = parseFloat(this.groupValue);
+                    }
+                    break;
+                case 51:
+                    if (inBoundary && !isPolylineBoundary && edgeType === 2) {
+                        // Arc end angle - generate arc points
+                        edgeEndAngle = parseFloat(this.groupValue);
+                        const arcPoints = this.generateArcPoints(
+                            edgeCenterX, edgeCenterY, edgeRadius,
+                            edgeStartAngle, edgeEndAngle, 16
+                        );
+                        currentPath.push(...arcPoints);
+                        edgeCount++;
                     }
                     break;
                 case 97:
-                    // End of boundary path edges
+                    // Number of source boundary objects (end of boundary definition)
+                    if (currentPath.length > 0) {
+                        hatch.boundaryPaths.push(currentPath);
+                        currentPath = [];
+                    }
                     inBoundary = false;
                     break;
             }
         }
 
         return hatch;
+    }
+
+    private generateArcPoints(
+        cx: number, cy: number, radius: number,
+        startAngle: number, endAngle: number, segments: number
+    ): DxfPoint[] {
+        const points: DxfPoint[] = [];
+
+        // Convert degrees to radians
+        let start = startAngle * Math.PI / 180;
+        let end = endAngle * Math.PI / 180;
+
+        // Handle arc direction
+        if (end < start) {
+            end += Math.PI * 2;
+        }
+
+        const arcLength = end - start;
+        const actualSegments = Math.max(4, Math.ceil(segments * arcLength / (Math.PI * 2)));
+
+        for (let i = 0; i <= actualSegments; i++) {
+            const angle = start + (i / actualSegments) * arcLength;
+            points.push({
+                x: cx + Math.cos(angle) * radius,
+                y: cy + Math.sin(angle) * radius
+            });
+        }
+
+        return points;
     }
 
     private parseDimension(): DxfDimension {
@@ -1215,11 +1381,18 @@ export class DxfParser {
             }
 
             switch (this.groupCode) {
+                case 2:
+                    // Block name containing dimension graphics (e.g., *D3)
+                    dimension.blockName = this.groupValue;
+                    break;
                 case 5:
                     dimension.handle = this.groupValue;
                     break;
                 case 8:
                     dimension.layer = this.groupValue;
+                    break;
+                case 60:
+                    dimension.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     dimension.color = parseInt(this.groupValue, 10);
@@ -1277,6 +1450,9 @@ export class DxfParser {
                     break;
                 case 8:
                     solid.layer = this.groupValue;
+                    break;
+                case 60:
+                    solid.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     solid.color = parseInt(this.groupValue, 10);
@@ -1337,6 +1513,9 @@ export class DxfParser {
                     break;
                 case 8:
                     attrib.layer = this.groupValue;
+                    break;
+                case 60:
+                    attrib.visible = parseInt(this.groupValue, 10) === 0;
                     break;
                 case 62:
                     attrib.color = parseInt(this.groupValue, 10);
@@ -1400,6 +1579,9 @@ export class DxfParser {
                 case 8:
                     leader.layer = this.groupValue;
                     break;
+                case 60:
+                    leader.visible = parseInt(this.groupValue, 10) === 0;
+                    break;
                 case 62:
                     leader.color = parseInt(this.groupValue, 10);
                     break;
@@ -1424,6 +1606,70 @@ export class DxfParser {
         }
 
         return leader;
+    }
+
+    private parseWipeout(): DxfWipeout {
+        const wipeout: DxfWipeout = {
+            type: 'WIPEOUT',
+            layer: '0',
+            insertionPoint: { x: 0, y: 0 },
+            clipBoundary: []
+        };
+
+        let currentClipPoint: DxfPoint | null = null;
+        let inClipBoundary = false;
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                if (currentClipPoint) {
+                    wipeout.clipBoundary.push(currentClipPoint);
+                }
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    wipeout.handle = this.groupValue;
+                    break;
+                case 8:
+                    wipeout.layer = this.groupValue;
+                    break;
+                case 60:
+                    wipeout.visible = parseInt(this.groupValue, 10) === 0;
+                    break;
+                case 62:
+                    wipeout.color = parseInt(this.groupValue, 10);
+                    break;
+                case 10:
+                    wipeout.insertionPoint.x = parseFloat(this.groupValue);
+                    break;
+                case 20:
+                    wipeout.insertionPoint.y = parseFloat(this.groupValue);
+                    break;
+                case 91:
+                    // Number of clip boundary vertices
+                    inClipBoundary = true;
+                    break;
+                case 14:
+                    // Clip boundary vertex X
+                    if (currentClipPoint) {
+                        wipeout.clipBoundary.push(currentClipPoint);
+                    }
+                    currentClipPoint = { x: parseFloat(this.groupValue), y: 0 };
+                    break;
+                case 24:
+                    // Clip boundary vertex Y
+                    if (currentClipPoint) {
+                        currentClipPoint.y = parseFloat(this.groupValue);
+                    }
+                    break;
+            }
+        }
+
+        return wipeout;
     }
 
     private skipEntity(): void {

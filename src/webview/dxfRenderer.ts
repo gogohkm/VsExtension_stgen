@@ -20,7 +20,8 @@ import {
     DxfDimension,
     DxfSolid,
     DxfAttrib,
-    DxfLeader
+    DxfLeader,
+    DxfWipeout
 } from './dxfParser';
 
 // AutoCAD Color Index (ACI) to RGB - Full 256 color palette
@@ -253,6 +254,11 @@ export class DxfRenderer {
     }
 
     private renderEntity(entity: DxfEntity, dxf: ParsedDxf): THREE.Object3D | null {
+        // Skip invisible entities
+        if (entity.visible === false) {
+            return null;
+        }
+
         // Resolve color: use entity color if valid, otherwise use layer color
         let color: number;
         if (entity.color !== undefined && entity.color !== COLOR_BYLAYER && entity.color !== COLOR_BYBLOCK) {
@@ -285,7 +291,7 @@ export class DxfRenderer {
             case 'HATCH':
                 return this.renderHatch(entity as DxfHatch, color);
             case 'DIMENSION':
-                return this.renderDimension(entity as DxfDimension, color);
+                return this.renderDimension(entity as DxfDimension, color, dxf);
             case 'SOLID':
             case '3DFACE':
                 return this.renderSolid(entity as DxfSolid, color);
@@ -294,6 +300,8 @@ export class DxfRenderer {
                 return this.renderAttrib(entity as DxfAttrib, color);
             case 'LEADER':
                 return this.renderLeader(entity as DxfLeader, color);
+            case 'WIPEOUT':
+                return this.renderWipeout(entity as DxfWipeout);
             default:
                 return null;
         }
@@ -691,10 +699,26 @@ export class DxfRenderer {
         return group;
     }
 
-    private renderDimension(dimension: DxfDimension, color: number): THREE.Group {
+    private renderDimension(dimension: DxfDimension, color: number, dxf: ParsedDxf): THREE.Group {
         const group = new THREE.Group();
 
-        // Draw dimension line
+        // Try to render from the dimension's block reference (e.g., *D3)
+        // This is the proper way as AutoCAD stores dimension graphics in blocks
+        if (dimension.blockName) {
+            const block = dxf.blocks.get(dimension.blockName);
+            if (block && block.entities.length > 0) {
+                for (const entity of block.entities) {
+                    const object = this.renderEntity(entity, dxf);
+                    if (object) {
+                        group.add(object);
+                    }
+                }
+                // Block entities are already in world coordinates, no transformation needed
+                return group;
+            }
+        }
+
+        // Fallback: Draw simple dimension representation if block not found
         const lineGeometry = new THREE.BufferGeometry().setFromPoints([
             new THREE.Vector3(dimension.definitionPoint.x, dimension.definitionPoint.y, 0),
             new THREE.Vector3(dimension.middlePoint.x, dimension.middlePoint.y, 0)
@@ -917,6 +941,35 @@ export class DxfRenderer {
         }
 
         return group;
+    }
+
+    private renderWipeout(wipeout: DxfWipeout): THREE.Mesh | null {
+        if (wipeout.clipBoundary.length < 3) {
+            return null;
+        }
+
+        try {
+            const shape = new THREE.Shape();
+            shape.moveTo(wipeout.clipBoundary[0].x, wipeout.clipBoundary[0].y);
+            for (let i = 1; i < wipeout.clipBoundary.length; i++) {
+                shape.lineTo(wipeout.clipBoundary[i].x, wipeout.clipBoundary[i].y);
+            }
+            shape.closePath();
+
+            const geometry = new THREE.ShapeGeometry(shape);
+            // Use the scene background color to mask underlying content
+            const material = new THREE.MeshBasicMaterial({
+                color: 0x1e1e1e,  // Match scene background
+                side: THREE.DoubleSide,
+                depthWrite: true
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.z = 0.1;  // Render slightly in front to occlude other entities
+            return mesh;
+        } catch (e) {
+            console.error('Failed to render WIPEOUT:', e);
+            return null;
+        }
     }
 
     fitView(padding: number = 0.1): void {
