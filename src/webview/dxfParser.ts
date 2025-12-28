@@ -64,6 +64,40 @@ export interface DxfInsert extends DxfEntity {
     rotation: number;
 }
 
+export interface DxfEllipse extends DxfEntity {
+    type: 'ELLIPSE';
+    center: DxfPoint;
+    majorAxisEndpoint: DxfPoint;  // Endpoint of major axis relative to center
+    ratio: number;  // Ratio of minor axis to major axis
+    startAngle: number;  // Start parameter (0-2*PI)
+    endAngle: number;  // End parameter (0-2*PI)
+}
+
+export interface DxfSpline extends DxfEntity {
+    type: 'SPLINE';
+    degree: number;
+    closed: boolean;
+    controlPoints: DxfPoint[];
+    fitPoints: DxfPoint[];
+    knots: number[];
+}
+
+export interface DxfHatch extends DxfEntity {
+    type: 'HATCH';
+    patternName: string;
+    solid: boolean;
+    boundaryPaths: DxfPoint[][];  // Array of boundary loops
+}
+
+export interface DxfDimension extends DxfEntity {
+    type: 'DIMENSION';
+    dimensionType: number;
+    definitionPoint: DxfPoint;
+    middlePoint: DxfPoint;
+    text: string;
+    rotation: number;
+}
+
 export interface DxfLayer {
     name: string;
     color: number;
@@ -89,7 +123,7 @@ export interface ParsedDxf {
     };
 }
 
-type AnyDxfEntity = DxfLine | DxfCircle | DxfArc | DxfPolyline | DxfText | DxfPoint_ | DxfInsert;
+type AnyDxfEntity = DxfLine | DxfCircle | DxfArc | DxfPolyline | DxfText | DxfPoint_ | DxfInsert | DxfEllipse | DxfSpline | DxfHatch | DxfDimension;
 
 export class DxfParser {
     private lines: string[] = [];
@@ -348,6 +382,14 @@ export class DxfParser {
                 return this.parsePoint();
             case 'INSERT':
                 return this.parseInsert();
+            case 'ELLIPSE':
+                return this.parseEllipse();
+            case 'SPLINE':
+                return this.parseSpline();
+            case 'HATCH':
+                return this.parseHatch();
+            case 'DIMENSION':
+                return this.parseDimension();
             default:
                 this.skipEntity();
                 return null;
@@ -842,6 +884,279 @@ export class DxfParser {
         return insert;
     }
 
+    private parseEllipse(): DxfEllipse {
+        const ellipse: DxfEllipse = {
+            type: 'ELLIPSE',
+            layer: '0',
+            center: { x: 0, y: 0 },
+            majorAxisEndpoint: { x: 1, y: 0 },
+            ratio: 1,
+            startAngle: 0,
+            endAngle: Math.PI * 2
+        };
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    ellipse.handle = this.groupValue;
+                    break;
+                case 8:
+                    ellipse.layer = this.groupValue;
+                    break;
+                case 62:
+                    ellipse.color = parseInt(this.groupValue, 10);
+                    break;
+                case 10:
+                    ellipse.center.x = parseFloat(this.groupValue);
+                    break;
+                case 20:
+                    ellipse.center.y = parseFloat(this.groupValue);
+                    break;
+                case 11:
+                    ellipse.majorAxisEndpoint.x = parseFloat(this.groupValue);
+                    break;
+                case 21:
+                    ellipse.majorAxisEndpoint.y = parseFloat(this.groupValue);
+                    break;
+                case 40:
+                    ellipse.ratio = parseFloat(this.groupValue);
+                    break;
+                case 41:
+                    ellipse.startAngle = parseFloat(this.groupValue);
+                    break;
+                case 42:
+                    ellipse.endAngle = parseFloat(this.groupValue);
+                    break;
+            }
+        }
+
+        return ellipse;
+    }
+
+    private parseSpline(): DxfSpline {
+        const spline: DxfSpline = {
+            type: 'SPLINE',
+            layer: '0',
+            degree: 3,
+            closed: false,
+            controlPoints: [],
+            fitPoints: [],
+            knots: []
+        };
+
+        let currentControlPoint: DxfPoint | null = null;
+        let currentFitPoint: DxfPoint | null = null;
+        let readingControlPoints = false;
+        let readingFitPoints = false;
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                if (currentControlPoint) {
+                    spline.controlPoints.push(currentControlPoint);
+                }
+                if (currentFitPoint) {
+                    spline.fitPoints.push(currentFitPoint);
+                }
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    spline.handle = this.groupValue;
+                    break;
+                case 8:
+                    spline.layer = this.groupValue;
+                    break;
+                case 62:
+                    spline.color = parseInt(this.groupValue, 10);
+                    break;
+                case 70:
+                    const flags = parseInt(this.groupValue, 10);
+                    spline.closed = (flags & 1) !== 0;
+                    break;
+                case 71:
+                    spline.degree = parseInt(this.groupValue, 10);
+                    break;
+                case 40:
+                    spline.knots.push(parseFloat(this.groupValue));
+                    break;
+                case 10:
+                    // Control point X
+                    if (currentControlPoint) {
+                        spline.controlPoints.push(currentControlPoint);
+                    }
+                    currentControlPoint = { x: parseFloat(this.groupValue), y: 0 };
+                    readingControlPoints = true;
+                    readingFitPoints = false;
+                    break;
+                case 20:
+                    if (currentControlPoint && readingControlPoints) {
+                        currentControlPoint.y = parseFloat(this.groupValue);
+                    } else if (currentFitPoint && readingFitPoints) {
+                        currentFitPoint.y = parseFloat(this.groupValue);
+                    }
+                    break;
+                case 11:
+                    // Fit point X
+                    if (currentFitPoint) {
+                        spline.fitPoints.push(currentFitPoint);
+                    }
+                    currentFitPoint = { x: parseFloat(this.groupValue), y: 0 };
+                    readingFitPoints = true;
+                    readingControlPoints = false;
+                    break;
+                case 21:
+                    if (currentFitPoint) {
+                        currentFitPoint.y = parseFloat(this.groupValue);
+                    }
+                    break;
+            }
+        }
+
+        return spline;
+    }
+
+    private parseHatch(): DxfHatch {
+        const hatch: DxfHatch = {
+            type: 'HATCH',
+            layer: '0',
+            patternName: 'SOLID',
+            solid: true,
+            boundaryPaths: []
+        };
+
+        let currentPath: DxfPoint[] = [];
+        let numBoundaryPaths = 0;
+        let numEdges = 0;
+        let inBoundary = false;
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                if (currentPath.length > 0) {
+                    hatch.boundaryPaths.push(currentPath);
+                }
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    hatch.handle = this.groupValue;
+                    break;
+                case 8:
+                    hatch.layer = this.groupValue;
+                    break;
+                case 62:
+                    hatch.color = parseInt(this.groupValue, 10);
+                    break;
+                case 2:
+                    hatch.patternName = this.groupValue;
+                    break;
+                case 70:
+                    hatch.solid = parseInt(this.groupValue, 10) === 1;
+                    break;
+                case 91:
+                    numBoundaryPaths = parseInt(this.groupValue, 10);
+                    break;
+                case 92:
+                    // Start of new boundary path
+                    if (currentPath.length > 0) {
+                        hatch.boundaryPaths.push(currentPath);
+                        currentPath = [];
+                    }
+                    inBoundary = true;
+                    break;
+                case 93:
+                    numEdges = parseInt(this.groupValue, 10);
+                    break;
+                case 10:
+                    if (inBoundary) {
+                        currentPath.push({ x: parseFloat(this.groupValue), y: 0 });
+                    }
+                    break;
+                case 20:
+                    if (inBoundary && currentPath.length > 0) {
+                        currentPath[currentPath.length - 1].y = parseFloat(this.groupValue);
+                    }
+                    break;
+                case 97:
+                    // End of boundary path edges
+                    inBoundary = false;
+                    break;
+            }
+        }
+
+        return hatch;
+    }
+
+    private parseDimension(): DxfDimension {
+        const dimension: DxfDimension = {
+            type: 'DIMENSION',
+            layer: '0',
+            dimensionType: 0,
+            definitionPoint: { x: 0, y: 0 },
+            middlePoint: { x: 0, y: 0 },
+            text: '',
+            rotation: 0
+        };
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2;
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 5:
+                    dimension.handle = this.groupValue;
+                    break;
+                case 8:
+                    dimension.layer = this.groupValue;
+                    break;
+                case 62:
+                    dimension.color = parseInt(this.groupValue, 10);
+                    break;
+                case 70:
+                    dimension.dimensionType = parseInt(this.groupValue, 10);
+                    break;
+                case 1:
+                    dimension.text = this.groupValue;
+                    break;
+                case 10:
+                    dimension.definitionPoint.x = parseFloat(this.groupValue);
+                    break;
+                case 20:
+                    dimension.definitionPoint.y = parseFloat(this.groupValue);
+                    break;
+                case 11:
+                    dimension.middlePoint.x = parseFloat(this.groupValue);
+                    break;
+                case 21:
+                    dimension.middlePoint.y = parseFloat(this.groupValue);
+                    break;
+                case 50:
+                    dimension.rotation = parseFloat(this.groupValue);
+                    break;
+            }
+        }
+
+        return dimension;
+    }
+
     private skipEntity(): void {
         while (this.pos < this.lines.length) {
             this.readGroup();
@@ -904,6 +1219,43 @@ export class DxfParser {
                 case 'INSERT': {
                     const insert = entity as DxfInsert;
                     updateBounds(insert.position.x, insert.position.y);
+                    break;
+                }
+                case 'ELLIPSE': {
+                    const ellipse = entity as DxfEllipse;
+                    const majorLen = Math.sqrt(
+                        ellipse.majorAxisEndpoint.x * ellipse.majorAxisEndpoint.x +
+                        ellipse.majorAxisEndpoint.y * ellipse.majorAxisEndpoint.y
+                    );
+                    const minorLen = majorLen * ellipse.ratio;
+                    const maxRadius = Math.max(majorLen, minorLen);
+                    updateBounds(ellipse.center.x - maxRadius, ellipse.center.y - maxRadius);
+                    updateBounds(ellipse.center.x + maxRadius, ellipse.center.y + maxRadius);
+                    break;
+                }
+                case 'SPLINE': {
+                    const spline = entity as DxfSpline;
+                    for (const point of spline.controlPoints) {
+                        updateBounds(point.x, point.y);
+                    }
+                    for (const point of spline.fitPoints) {
+                        updateBounds(point.x, point.y);
+                    }
+                    break;
+                }
+                case 'HATCH': {
+                    const hatch = entity as DxfHatch;
+                    for (const path of hatch.boundaryPaths) {
+                        for (const point of path) {
+                            updateBounds(point.x, point.y);
+                        }
+                    }
+                    break;
+                }
+                case 'DIMENSION': {
+                    const dimension = entity as DxfDimension;
+                    updateBounds(dimension.definitionPoint.x, dimension.definitionPoint.y);
+                    updateBounds(dimension.middlePoint.x, dimension.middlePoint.y);
                     break;
                 }
             }

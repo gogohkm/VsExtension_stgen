@@ -106,7 +106,7 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private handleMessage(
         message: any,
         webviewPanel: vscode.WebviewPanel,
-        _documentUri: vscode.Uri
+        documentUri: vscode.Uri
     ): void {
         switch (message.type) {
             case 'captured':
@@ -114,6 +114,12 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 break;
             case 'entitiesExtracted':
                 this.handleExtractedEntities(message.data);
+                break;
+            case 'saveAnnotations':
+                this.saveAnnotations(documentUri, message.data);
+                break;
+            case 'loadAnnotations':
+                this.loadAnnotations(documentUri, webviewPanel);
                 break;
             case 'error':
                 vscode.window.showErrorMessage(`DXF Viewer Error: ${message.message}`);
@@ -167,6 +173,39 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         vscode.window.showInformationMessage(
             'Entity data copied to clipboard. You can paste it in Claude Code chat.'
         );
+    }
+
+    private getAnnotationsFilePath(documentUri: vscode.Uri): vscode.Uri {
+        return vscode.Uri.file(documentUri.fsPath + '.annotations.json');
+    }
+
+    private async saveAnnotations(documentUri: vscode.Uri, data: string): Promise<void> {
+        try {
+            const annotationsUri = this.getAnnotationsFilePath(documentUri);
+            const buffer = Buffer.from(data, 'utf-8');
+            await vscode.workspace.fs.writeFile(annotationsUri, buffer);
+            vscode.window.showInformationMessage('Annotations saved successfully.');
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to save annotations: ${error}`);
+        }
+    }
+
+    private async loadAnnotations(documentUri: vscode.Uri, webviewPanel: vscode.WebviewPanel): Promise<void> {
+        try {
+            const annotationsUri = this.getAnnotationsFilePath(documentUri);
+            const data = await vscode.workspace.fs.readFile(annotationsUri);
+            const text = new TextDecoder('utf-8').decode(data);
+            webviewPanel.webview.postMessage({
+                type: 'loadAnnotations',
+                data: text
+            });
+        } catch (error) {
+            // Silently ignore if annotations file doesn't exist
+            webviewPanel.webview.postMessage({
+                type: 'loadAnnotations',
+                data: '[]'
+            });
+        }
     }
 
     public static requestCapture(): void {
@@ -236,10 +275,23 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
 </head>
 <body>
     <div id="viewer-container"></div>
+    <div id="layer-panel">
+        <div class="layer-panel-header">
+            <h4>Layers</h4>
+            <div class="layer-panel-actions">
+                <button id="btn-layers-all" title="Show All">All</button>
+                <button id="btn-layers-none" title="Hide All">None</button>
+                <button id="btn-layers-close" title="Close">&times;</button>
+            </div>
+        </div>
+        <div id="layer-list"></div>
+    </div>
     <div id="toolbar">
         <button id="btn-zoom-fit" title="Fit View">Fit</button>
         <button id="btn-zoom-in" title="Zoom In">+</button>
         <button id="btn-zoom-out" title="Zoom Out">-</button>
+        <span class="separator">|</span>
+        <button id="btn-layers" title="Toggle Layers Panel">Layers</button>
         <span class="separator">|</span>
         <button id="btn-capture" title="Capture View">Capture</button>
         <button id="btn-extract" title="Extract Entities">Extract</button>
@@ -248,6 +300,8 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         <button id="btn-annotate-arrow" title="Add Arrow">→</button>
         <button id="btn-annotate-rect" title="Add Rectangle">□</button>
         <button id="btn-clear-annotations" title="Clear Annotations">Clear</button>
+        <button id="btn-save-annotations" title="Save Annotations">Save</button>
+        <button id="btn-load-annotations" title="Load Annotations">Load</button>
     </div>
     <div id="status-bar">
         <span id="status-text">Ready</span>

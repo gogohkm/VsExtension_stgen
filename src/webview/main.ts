@@ -3,7 +3,7 @@
  */
 
 import './styles.css';
-import { DxfParser, ParsedDxf, DxfEntity, DxfLine, DxfCircle, DxfArc, DxfPolyline, DxfText, DxfPoint_ } from './dxfParser';
+import { DxfParser, ParsedDxf, DxfEntity, DxfLine, DxfCircle, DxfArc, DxfPolyline, DxfText, DxfPoint_, DxfEllipse, DxfSpline, DxfHatch, DxfDimension } from './dxfParser';
 import { DxfRenderer } from './dxfRenderer';
 import { AnnotationManager, AnnotationType } from './annotationManager';
 
@@ -50,6 +50,7 @@ class DxfViewerApp {
 
         // Setup UI event listeners
         this.setupToolbarEvents();
+        this.setupLayerPanel();
 
         // Setup message handler
         window.addEventListener('message', (event) => {
@@ -101,6 +102,109 @@ class DxfViewerApp {
             this.annotationManager?.clearAll();
             this.renderer?.render();
         });
+
+        // Annotation save/load
+        document.getElementById('btn-save-annotations')?.addEventListener('click', () => {
+            this.saveAnnotations();
+        });
+
+        document.getElementById('btn-load-annotations')?.addEventListener('click', () => {
+            this.requestLoadAnnotations();
+        });
+
+        // Layer panel toggle
+        document.getElementById('btn-layers')?.addEventListener('click', () => {
+            this.toggleLayerPanel();
+        });
+    }
+
+    private setupLayerPanel(): void {
+        // Close button
+        document.getElementById('btn-layers-close')?.addEventListener('click', () => {
+            this.toggleLayerPanel(false);
+        });
+
+        // Show all layers
+        document.getElementById('btn-layers-all')?.addEventListener('click', () => {
+            this.renderer?.toggleAllLayers(true);
+            this.updateLayerList();
+        });
+
+        // Hide all layers
+        document.getElementById('btn-layers-none')?.addEventListener('click', () => {
+            this.renderer?.toggleAllLayers(false);
+            this.updateLayerList();
+        });
+    }
+
+    private toggleLayerPanel(visible?: boolean): void {
+        const panel = document.getElementById('layer-panel');
+        const btn = document.getElementById('btn-layers');
+
+        if (!panel) return;
+
+        if (visible === undefined) {
+            panel.classList.toggle('visible');
+        } else if (visible) {
+            panel.classList.add('visible');
+        } else {
+            panel.classList.remove('visible');
+        }
+
+        const isVisible = panel.classList.contains('visible');
+        btn?.classList.toggle('active', isVisible);
+
+        if (isVisible) {
+            this.updateLayerList();
+        }
+    }
+
+    private updateLayerList(): void {
+        const listContainer = document.getElementById('layer-list');
+        if (!listContainer || !this.renderer) return;
+
+        const layers = this.renderer.getLayers();
+        listContainer.innerHTML = '';
+
+        for (const layer of layers) {
+            const item = document.createElement('div');
+            item.className = 'layer-item';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = layer.visible;
+            checkbox.addEventListener('change', () => {
+                this.renderer?.toggleLayerVisibility(layer.name, checkbox.checked);
+            });
+
+            const colorBox = document.createElement('div');
+            colorBox.className = 'layer-color';
+            colorBox.style.backgroundColor = '#' + layer.color.toString(16).padStart(6, '0');
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'layer-name';
+            nameSpan.textContent = layer.name;
+            nameSpan.title = layer.name;
+
+            const countSpan = document.createElement('span');
+            countSpan.className = 'layer-count';
+            countSpan.textContent = `(${layer.entityCount})`;
+
+            item.appendChild(checkbox);
+            item.appendChild(colorBox);
+            item.appendChild(nameSpan);
+            item.appendChild(countSpan);
+
+            // Click on layer item toggles visibility
+            item.addEventListener('click', (e) => {
+                if (e.target !== checkbox) {
+                    checkbox.checked = !checkbox.checked;
+                    this.renderer?.toggleLayerVisibility(layer.name, checkbox.checked);
+                }
+            });
+
+            listContainer.appendChild(item);
+        }
     }
 
     private handleMessage(message: any): void {
@@ -124,6 +228,9 @@ class DxfViewerApp {
                 this.annotationManager?.clearAll();
                 this.renderer?.render();
                 break;
+            case 'loadAnnotations':
+                this.loadAnnotations(message.data);
+                break;
         }
     }
 
@@ -139,6 +246,9 @@ class DxfViewerApp {
                 this.renderer.loadDxf(this.parsedDxf);
             }
 
+            // Update layer panel if visible
+            this.updateLayerList();
+
             const entityCount = this.parsedDxf.entities.length;
             const layerCount = this.parsedDxf.layers.size;
             this.setStatus(`Loaded: ${fileName} (${entityCount} entities, ${layerCount} layers)`);
@@ -147,6 +257,9 @@ class DxfViewerApp {
                 type: 'info',
                 message: `Loaded ${fileName}: ${entityCount} entities`
             });
+
+            // Auto-load annotations if they exist
+            this.requestLoadAnnotations();
 
         } catch (error) {
             console.error('Failed to parse DXF:', error);
@@ -277,6 +390,26 @@ class DxfViewerApp {
                 const point = entity as DxfPoint_;
                 return `- POINT${handle}${layer}: (${point.position.x.toFixed(2)}, ${point.position.y.toFixed(2)})`;
             }
+            case 'ELLIPSE': {
+                const ellipse = entity as DxfEllipse;
+                const majorLen = Math.sqrt(ellipse.majorAxisEndpoint.x ** 2 + ellipse.majorAxisEndpoint.y ** 2);
+                return `- ELLIPSE${handle}${layer}: center=(${ellipse.center.x.toFixed(2)}, ${ellipse.center.y.toFixed(2)}) major=${majorLen.toFixed(2)} ratio=${ellipse.ratio.toFixed(2)}`;
+            }
+            case 'SPLINE': {
+                const spline = entity as DxfSpline;
+                const closed = spline.closed ? ' (closed)' : '';
+                return `- SPLINE${handle}${layer}: degree=${spline.degree} ${spline.controlPoints.length} control points${closed}`;
+            }
+            case 'HATCH': {
+                const hatch = entity as DxfHatch;
+                const solid = hatch.solid ? 'solid' : hatch.patternName;
+                return `- HATCH${handle}${layer}: ${solid} ${hatch.boundaryPaths.length} boundaries`;
+            }
+            case 'DIMENSION': {
+                const dimension = entity as DxfDimension;
+                const text = dimension.text ? ` "${dimension.text}"` : '';
+                return `- DIMENSION${handle}${layer}:${text} at (${dimension.middlePoint.x.toFixed(2)}, ${dimension.middlePoint.y.toFixed(2)})`;
+            }
             default:
                 return `- ${entity.type}${handle}${layer}`;
         }
@@ -314,6 +447,34 @@ class DxfViewerApp {
             };
             document.getElementById(buttonMap[type])?.classList.add('active');
         }
+    }
+
+    private saveAnnotations(): void {
+        if (!this.annotationManager) {
+            return;
+        }
+
+        const data = this.annotationManager.serialize();
+        this.vscode.postMessage({
+            type: 'saveAnnotations',
+            data: data
+        });
+    }
+
+    private requestLoadAnnotations(): void {
+        this.vscode.postMessage({
+            type: 'loadAnnotations'
+        });
+    }
+
+    private loadAnnotations(data: string): void {
+        if (!this.annotationManager) {
+            return;
+        }
+
+        this.annotationManager.deserialize(data);
+        this.renderer?.render();
+        this.setStatus('Annotations loaded');
     }
 
     private showLoading(visible: boolean): void {
