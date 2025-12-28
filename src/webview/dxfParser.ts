@@ -139,6 +139,14 @@ export interface DxfLayer {
     color: number;
     frozen: boolean;
     off: boolean;
+    lineType?: string;  // Default linetype for layer
+}
+
+export interface DxfLineType {
+    name: string;
+    description: string;
+    pattern: number[];  // Dash/gap lengths (positive=dash, negative=gap)
+    totalLength: number;
 }
 
 export interface DxfBlock {
@@ -150,6 +158,7 @@ export interface DxfBlock {
 export interface ParsedDxf {
     entities: DxfEntity[];
     layers: Map<string, DxfLayer>;
+    lineTypes: Map<string, DxfLineType>;
     blocks: Map<string, DxfBlock>;
     bounds: {
         minX: number;
@@ -175,6 +184,7 @@ export class DxfParser {
         const result: ParsedDxf = {
             entities: [],
             layers: new Map(),
+            lineTypes: new Map(),
             blocks: new Map(),
             bounds: {
                 minX: Infinity,
@@ -183,6 +193,9 @@ export class DxfParser {
                 maxY: -Infinity
             }
         };
+
+        // Add standard linetypes
+        this.addStandardLineTypes(result);
 
         while (this.pos < this.lines.length) {
             this.readGroup();
@@ -253,8 +266,12 @@ export class DxfParser {
                     this.readGroup();
                     const tableCode = this.groupCode;
                     const tableName = this.groupValue;
-                    if (tableCode === 2 && tableName === 'LAYER') {
-                        this.parseLayerTable(result);
+                    if (tableCode === 2) {
+                        if (tableName === 'LAYER') {
+                            this.parseLayerTable(result);
+                        } else if (tableName === 'LTYPE') {
+                            this.parseLineTypeTable(result);
+                        }
                     }
                 }
             }
@@ -313,6 +330,117 @@ export class DxfParser {
         }
 
         return layer;
+    }
+
+    private parseLineTypeTable(result: ParsedDxf): void {
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                if (this.groupValue === 'ENDTAB') {
+                    break;
+                } else if (this.groupValue === 'LTYPE') {
+                    const lineType = this.parseLineType();
+                    if (lineType && lineType.name) {
+                        result.lineTypes.set(lineType.name.toUpperCase(), lineType);
+                    }
+                }
+            }
+        }
+    }
+
+    private parseLineType(): DxfLineType | null {
+        const lineType: DxfLineType = {
+            name: '',
+            description: '',
+            pattern: [],
+            totalLength: 0
+        };
+
+        let elementCount = 0;
+
+        while (this.pos < this.lines.length) {
+            this.readGroup();
+
+            if (this.groupCode === 0) {
+                this.pos -= 2; // Unread the group
+                break;
+            }
+
+            switch (this.groupCode) {
+                case 2:
+                    lineType.name = this.groupValue;
+                    break;
+                case 3:
+                    lineType.description = this.groupValue;
+                    break;
+                case 73:
+                    elementCount = parseInt(this.groupValue, 10);
+                    break;
+                case 40:
+                    lineType.totalLength = parseFloat(this.groupValue);
+                    break;
+                case 49:
+                    // Dash/gap element
+                    const element = parseFloat(this.groupValue);
+                    lineType.pattern.push(element);
+                    break;
+            }
+        }
+
+        return lineType;
+    }
+
+    private addStandardLineTypes(result: ParsedDxf): void {
+        // Add standard AutoCAD linetypes
+        result.lineTypes.set('CONTINUOUS', {
+            name: 'CONTINUOUS',
+            description: 'Solid line',
+            pattern: [],
+            totalLength: 0
+        });
+
+        result.lineTypes.set('DASHED', {
+            name: 'DASHED',
+            description: 'Dashed line',
+            pattern: [12.7, -6.35],  // 0.5", 0.25" gap
+            totalLength: 19.05
+        });
+
+        result.lineTypes.set('HIDDEN', {
+            name: 'HIDDEN',
+            description: 'Hidden line',
+            pattern: [6.35, -3.175],  // 0.25", 0.125" gap
+            totalLength: 9.525
+        });
+
+        result.lineTypes.set('CENTER', {
+            name: 'CENTER',
+            description: 'Center line',
+            pattern: [31.75, -6.35, 6.35, -6.35],  // Long, gap, short, gap
+            totalLength: 50.8
+        });
+
+        result.lineTypes.set('DASHDOT', {
+            name: 'DASHDOT',
+            description: 'Dash dot line',
+            pattern: [12.7, -6.35, 0, -6.35],  // Dash, gap, dot, gap
+            totalLength: 25.4
+        });
+
+        result.lineTypes.set('PHANTOM', {
+            name: 'PHANTOM',
+            description: 'Phantom line',
+            pattern: [31.75, -6.35, 6.35, -6.35, 6.35, -6.35],
+            totalLength: 63.5
+        });
+
+        result.lineTypes.set('DOT', {
+            name: 'DOT',
+            description: 'Dotted line',
+            pattern: [0, -6.35],
+            totalLength: 6.35
+        });
     }
 
     private parseBlocksSection(result: ParsedDxf): void {

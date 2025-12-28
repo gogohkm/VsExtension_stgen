@@ -4,7 +4,7 @@
 
 import './styles.css';
 import { DxfParser, ParsedDxf, DxfEntity, DxfLine, DxfCircle, DxfArc, DxfPolyline, DxfText, DxfPoint_, DxfEllipse, DxfSpline, DxfHatch, DxfDimension } from './dxfParser';
-import { DxfRenderer } from './dxfRenderer';
+import { DxfRenderer, SnapType, SnapPoint, DrawingMode } from './dxfRenderer';
 import { AnnotationManager, AnnotationType } from './annotationManager';
 
 declare function acquireVsCodeApi(): {
@@ -51,15 +51,226 @@ class DxfViewerApp {
         // Setup UI event listeners
         this.setupToolbarEvents();
         this.setupLayerPanel();
+        this.setupPropertiesPanel();
 
         // Setup message handler
         window.addEventListener('message', (event) => {
             this.handleMessage(event.data);
         });
 
+        // Setup keyboard shortcuts
+        this.setupKeyboardEvents();
+
+        // Setup snap marker display on mousemove
+        this.setupSnapMarkerEvents();
+
         // Notify extension that we're ready
         this.vscode.postMessage({ type: 'ready' });
         this.setStatus('Ready');
+    }
+
+    private setupKeyboardEvents(): void {
+        window.addEventListener('keydown', (e) => {
+            // Delete selected entities
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (this.renderer) {
+                    const count = this.renderer.deleteSelectedEntities();
+                    if (count > 0) {
+                        this.setStatus(`Deleted ${count} ${count === 1 ? 'entity' : 'entities'}`);
+                        e.preventDefault();
+                    }
+                }
+            }
+
+            // Escape - cancel/deselect
+            if (e.key === 'Escape') {
+                if (this.renderer?.isDrawing()) {
+                    this.cancelDrawing();
+                } else if (this.annotationManager?.isAnnotationMode()) {
+                    this.annotationManager.cancelAnnotation();
+                    this.setAnnotationModeIndicator(false);
+                } else if (this.renderer) {
+                    this.renderer.clearSelection();
+                }
+                e.preventDefault();
+            }
+
+            // Fit view
+            if (e.key === 'f' || e.key === 'F') {
+                if (!e.ctrlKey && !e.metaKey) {
+                    this.renderer?.fitView();
+                    e.preventDefault();
+                }
+            }
+
+            // Select all (Ctrl+A)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+                // Reserved for future select all functionality
+            }
+
+            // Toggle snap (S key)
+            if (e.key === 's' || e.key === 'S') {
+                if (!e.ctrlKey && !e.metaKey) {
+                    this.toggleSnap();
+                    e.preventDefault();
+                }
+            }
+
+            // Line drawing tool (L key)
+            if (e.key === 'l' || e.key === 'L') {
+                if (!e.ctrlKey && !e.metaKey) {
+                    this.startDrawingLine();
+                    e.preventDefault();
+                }
+            }
+
+            // Circle drawing tool (C key)
+            if (e.key === 'c' || e.key === 'C') {
+                if (!e.ctrlKey && !e.metaKey) {
+                    this.startDrawingCircle();
+                    e.preventDefault();
+                }
+            }
+        });
+    }
+
+    private setupSnapMarkerEvents(): void {
+        const container = document.getElementById('viewer-container');
+        if (!container || !this.renderer) return;
+
+        container.addEventListener('mousemove', (e) => {
+            if (!this.renderer) return;
+
+            // Update snap marker based on cursor position
+            const snapPoint = this.renderer.updateSnapMarker(e.clientX, e.clientY);
+
+            // Update status bar with snap info
+            if (snapPoint) {
+                this.updateSnapStatus(snapPoint);
+            }
+
+            // Update rubber band if in drawing mode
+            if (this.renderer.isDrawing()) {
+                this.renderer.updateRubberBand(e.clientX, e.clientY);
+            }
+        });
+
+        container.addEventListener('mouseleave', () => {
+            if (this.renderer) {
+                this.renderer.clearSnapMarker();
+            }
+        });
+
+        // Handle clicks for drawing mode
+        container.addEventListener('click', (e) => {
+            if (!this.renderer) return;
+
+            // If in drawing mode, handle drawing click
+            if (this.renderer.isDrawing()) {
+                const entity = this.renderer.handleDrawingClick(e.clientX, e.clientY);
+                if (entity) {
+                    this.setStatus(`Created ${entity.type} on layer "${entity.layer}"`);
+                    this.updateDrawingModeIndicator();
+                }
+                e.stopPropagation();
+            }
+        });
+    }
+
+    private toggleSnap(): void {
+        if (!this.renderer) return;
+
+        const enabled = !this.renderer.isSnapEnabled();
+        this.renderer.setSnapEnabled(enabled);
+
+        const btn = document.getElementById('btn-snap');
+        btn?.classList.toggle('active', enabled);
+
+        this.setStatus(enabled ? 'Snap enabled' : 'Snap disabled');
+    }
+
+    private updateSnapStatus(snapPoint: SnapPoint): void {
+        const snapTypeNames: Record<SnapType, string> = {
+            [SnapType.ENDPOINT]: 'Endpoint',
+            [SnapType.MIDPOINT]: 'Midpoint',
+            [SnapType.CENTER]: 'Center',
+            [SnapType.QUADRANT]: 'Quadrant',
+            [SnapType.INTERSECTION]: 'Intersection',
+            [SnapType.NEAREST]: 'Nearest'
+        };
+
+        const coordsEl = document.getElementById('coords');
+        if (coordsEl) {
+            coordsEl.textContent = `SNAP: ${snapTypeNames[snapPoint.type]} (${snapPoint.position.x.toFixed(2)}, ${snapPoint.position.y.toFixed(2)})`;
+        }
+    }
+
+    private startDrawingLine(): void {
+        if (!this.renderer) return;
+
+        // Cancel any annotation mode
+        if (this.annotationManager?.isAnnotationMode()) {
+            this.annotationManager.cancelAnnotation();
+            this.setAnnotationModeIndicator(false);
+        }
+
+        this.renderer.startDrawingLine();
+        this.updateDrawingModeIndicator();
+        this.setStatus('Line: Click first point');
+    }
+
+    private startDrawingCircle(): void {
+        if (!this.renderer) return;
+
+        // Cancel any annotation mode
+        if (this.annotationManager?.isAnnotationMode()) {
+            this.annotationManager.cancelAnnotation();
+            this.setAnnotationModeIndicator(false);
+        }
+
+        this.renderer.startDrawingCircle();
+        this.updateDrawingModeIndicator();
+        this.setStatus('Circle: Click center point');
+    }
+
+    private cancelDrawing(): void {
+        if (!this.renderer) return;
+        this.renderer.cancelDrawing();
+        this.updateDrawingModeIndicator();
+        this.setStatus('Drawing cancelled');
+    }
+
+    private updateDrawingModeIndicator(): void {
+        const indicator = document.getElementById('drawing-mode-indicator');
+        const btnLine = document.getElementById('btn-draw-line');
+        const btnCircle = document.getElementById('btn-draw-circle');
+
+        if (!this.renderer) {
+            indicator?.classList.remove('visible');
+            btnLine?.classList.remove('active');
+            btnCircle?.classList.remove('active');
+            return;
+        }
+
+        const mode = this.renderer.getDrawingMode();
+
+        btnLine?.classList.toggle('active', mode === DrawingMode.LINE);
+        btnCircle?.classList.toggle('active', mode === DrawingMode.CIRCLE);
+
+        if (indicator) {
+            if (mode !== DrawingMode.NONE) {
+                const modeNames: Record<DrawingMode, string> = {
+                    [DrawingMode.NONE]: '',
+                    [DrawingMode.LINE]: 'Drawing Line - Click to set points (Esc to cancel)',
+                    [DrawingMode.CIRCLE]: 'Drawing Circle - Click center, then radius (Esc to cancel)',
+                    [DrawingMode.POLYLINE]: 'Drawing Polyline (Esc to cancel)'
+                };
+                indicator.textContent = modeNames[mode];
+                indicator.classList.add('visible');
+            } else {
+                indicator.classList.remove('visible');
+            }
+        }
     }
 
     private setupToolbarEvents(): void {
@@ -116,6 +327,154 @@ class DxfViewerApp {
         document.getElementById('btn-layers')?.addEventListener('click', () => {
             this.toggleLayerPanel();
         });
+
+        // Properties panel toggle
+        document.getElementById('btn-properties')?.addEventListener('click', () => {
+            this.togglePropertiesPanel();
+        });
+
+        // Snap toggle
+        document.getElementById('btn-snap')?.addEventListener('click', () => {
+            this.toggleSnap();
+        });
+
+        // Drawing tools
+        document.getElementById('btn-draw-line')?.addEventListener('click', () => {
+            this.startDrawingLine();
+        });
+
+        document.getElementById('btn-draw-circle')?.addEventListener('click', () => {
+            this.startDrawingCircle();
+        });
+    }
+
+    private setupPropertiesPanel(): void {
+        // Close button
+        document.getElementById('btn-properties-close')?.addEventListener('click', () => {
+            this.togglePropertiesPanel(false);
+        });
+    }
+
+    private togglePropertiesPanel(visible?: boolean): void {
+        const panel = document.getElementById('properties-panel');
+        const btn = document.getElementById('btn-properties');
+
+        if (!panel) return;
+
+        if (visible === undefined) {
+            panel.classList.toggle('visible');
+        } else if (visible) {
+            panel.classList.add('visible');
+        } else {
+            panel.classList.remove('visible');
+        }
+
+        const isVisible = panel.classList.contains('visible');
+        btn?.classList.toggle('active', isVisible);
+
+        if (isVisible) {
+            this.updatePropertiesPanel();
+        }
+    }
+
+    updatePropertiesPanel(): void {
+        const content = document.getElementById('properties-content');
+        if (!content || !this.renderer) return;
+
+        const selected = this.renderer.getSelectedEntities();
+
+        if (selected.length === 0) {
+            content.innerHTML = '<div class="no-selection">No entity selected</div>';
+            return;
+        }
+
+        if (selected.length > 1) {
+            content.innerHTML = `<div class="no-selection">${selected.length} entities selected</div>`;
+            return;
+        }
+
+        const entity = selected[0].userData.entity;
+        if (!entity) {
+            content.innerHTML = '<div class="no-selection">No properties available</div>';
+            return;
+        }
+
+        const html: string[] = [];
+
+        // General properties
+        html.push('<div class="property-group">');
+        html.push('<div class="property-group-title">General</div>');
+        html.push(`<div class="property-row"><span class="property-label">Type</span><span class="property-value">${entity.type}</span></div>`);
+        html.push(`<div class="property-row"><span class="property-label">Layer</span><span class="property-value">${entity.layer}</span></div>`);
+        if (entity.handle) {
+            html.push(`<div class="property-row"><span class="property-label">Handle</span><span class="property-value">${entity.handle}</span></div>`);
+        }
+        if (entity.lineType) {
+            html.push(`<div class="property-row"><span class="property-label">Linetype</span><span class="property-value">${entity.lineType}</span></div>`);
+        }
+        html.push('</div>');
+
+        // Type-specific properties
+        html.push('<div class="property-group">');
+        html.push('<div class="property-group-title">Geometry</div>');
+        this.addEntityProperties(entity, html);
+        html.push('</div>');
+
+        content.innerHTML = html.join('');
+    }
+
+    private addEntityProperties(entity: any, html: string[]): void {
+        switch (entity.type) {
+            case 'LINE':
+                html.push(`<div class="property-row"><span class="property-label">Start X</span><span class="property-value">${entity.start.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Start Y</span><span class="property-value">${entity.start.y.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">End X</span><span class="property-value">${entity.end.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">End Y</span><span class="property-value">${entity.end.y.toFixed(4)}</span></div>`);
+                const lineLen = Math.sqrt(Math.pow(entity.end.x - entity.start.x, 2) + Math.pow(entity.end.y - entity.start.y, 2));
+                html.push(`<div class="property-row"><span class="property-label">Length</span><span class="property-value">${lineLen.toFixed(4)}</span></div>`);
+                break;
+            case 'CIRCLE':
+                html.push(`<div class="property-row"><span class="property-label">Center X</span><span class="property-value">${entity.center.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Center Y</span><span class="property-value">${entity.center.y.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Radius</span><span class="property-value">${entity.radius.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Diameter</span><span class="property-value">${(entity.radius * 2).toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Circumf.</span><span class="property-value">${(entity.radius * 2 * Math.PI).toFixed(4)}</span></div>`);
+                break;
+            case 'ARC':
+                html.push(`<div class="property-row"><span class="property-label">Center X</span><span class="property-value">${entity.center.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Center Y</span><span class="property-value">${entity.center.y.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Radius</span><span class="property-value">${entity.radius.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Start Angle</span><span class="property-value">${entity.startAngle.toFixed(2)}°</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">End Angle</span><span class="property-value">${entity.endAngle.toFixed(2)}°</span></div>`);
+                break;
+            case 'TEXT':
+            case 'MTEXT':
+                html.push(`<div class="property-row"><span class="property-label">Position X</span><span class="property-value">${entity.position.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Position Y</span><span class="property-value">${entity.position.y.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Height</span><span class="property-value">${entity.height.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Text</span><span class="property-value" title="${entity.text}">${entity.text.substring(0, 15)}${entity.text.length > 15 ? '...' : ''}</span></div>`);
+                break;
+            case 'POLYLINE':
+            case 'LWPOLYLINE':
+                html.push(`<div class="property-row"><span class="property-label">Vertices</span><span class="property-value">${entity.vertices.length}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Closed</span><span class="property-value">${entity.closed ? 'Yes' : 'No'}</span></div>`);
+                break;
+            case 'INSERT':
+                html.push(`<div class="property-row"><span class="property-label">Block Name</span><span class="property-value">${entity.blockName}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Position X</span><span class="property-value">${entity.position.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Position Y</span><span class="property-value">${entity.position.y.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Scale X</span><span class="property-value">${entity.scale.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Scale Y</span><span class="property-value">${entity.scale.y.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Rotation</span><span class="property-value">${entity.rotation.toFixed(2)}°</span></div>`);
+                break;
+            case 'ELLIPSE':
+                html.push(`<div class="property-row"><span class="property-label">Center X</span><span class="property-value">${entity.center.x.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Center Y</span><span class="property-value">${entity.center.y.toFixed(4)}</span></div>`);
+                html.push(`<div class="property-row"><span class="property-label">Ratio</span><span class="property-value">${entity.ratio.toFixed(4)}</span></div>`);
+                break;
+            default:
+                html.push(`<div class="property-row"><span class="property-label">-</span><span class="property-value">N/A</span></div>`);
+        }
     }
 
     private setupLayerPanel(): void {

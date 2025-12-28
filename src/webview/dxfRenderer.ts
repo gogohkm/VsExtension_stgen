@@ -21,7 +21,8 @@ import {
     DxfSolid,
     DxfAttrib,
     DxfLeader,
-    DxfWipeout
+    DxfWipeout,
+    DxfLineType
 } from './dxfParser';
 
 // AutoCAD Color Index (ACI) to RGB - Full 256 color palette
@@ -59,6 +60,105 @@ const ACI_COLORS: number[] = [
 const COLOR_BYLAYER = 256;
 const COLOR_BYBLOCK = 0;
 
+// Snap point types
+export enum SnapType {
+    ENDPOINT = 'endpoint',
+    MIDPOINT = 'midpoint',
+    CENTER = 'center',
+    QUADRANT = 'quadrant',
+    INTERSECTION = 'intersection',
+    NEAREST = 'nearest'
+}
+
+// Drawing modes
+export enum DrawingMode {
+    NONE = 'none',
+    LINE = 'line',
+    CIRCLE = 'circle',
+    POLYLINE = 'polyline'
+}
+
+// Snap point interface
+export interface SnapPoint {
+    type: SnapType;
+    position: { x: number; y: number };
+    entity: THREE.Object3D;
+}
+
+// Snap marker colors
+const SNAP_COLORS: Record<SnapType, number> = {
+    [SnapType.ENDPOINT]: 0x00ff00,    // Green
+    [SnapType.MIDPOINT]: 0x00ffff,    // Cyan
+    [SnapType.CENTER]: 0xff00ff,      // Magenta
+    [SnapType.QUADRANT]: 0xffff00,    // Yellow
+    [SnapType.INTERSECTION]: 0xff0000, // Red
+    [SnapType.NEAREST]: 0xffa500      // Orange
+};
+
+// Material cache for performance optimization
+class MaterialCache {
+    private lineBasicMaterials: Map<number, THREE.LineBasicMaterial> = new Map();
+    private lineDashedMaterials: Map<string, THREE.LineDashedMaterial> = new Map();
+    private meshMaterials: Map<string, THREE.MeshBasicMaterial> = new Map();
+    private pointMaterials: Map<string, THREE.PointsMaterial> = new Map();
+
+    getLineBasicMaterial(color: number): THREE.LineBasicMaterial {
+        let material = this.lineBasicMaterials.get(color);
+        if (!material) {
+            material = new THREE.LineBasicMaterial({ color });
+            this.lineBasicMaterials.set(color, material);
+        }
+        return material;
+    }
+
+    getLineDashedMaterial(color: number, dashSize: number, gapSize: number): THREE.LineDashedMaterial {
+        const key = `${color}-${dashSize}-${gapSize}`;
+        let material = this.lineDashedMaterials.get(key);
+        if (!material) {
+            material = new THREE.LineDashedMaterial({ color, dashSize, gapSize, scale: 1 });
+            this.lineDashedMaterials.set(key, material);
+        }
+        return material;
+    }
+
+    getMeshMaterial(color: number, opacity: number = 1, transparent: boolean = false): THREE.MeshBasicMaterial {
+        const key = `${color}-${opacity}-${transparent}`;
+        let material = this.meshMaterials.get(key);
+        if (!material) {
+            material = new THREE.MeshBasicMaterial({
+                color,
+                transparent,
+                opacity,
+                side: THREE.DoubleSide
+            });
+            this.meshMaterials.set(key, material);
+        }
+        return material;
+    }
+
+    getPointMaterial(color: number, size: number): THREE.PointsMaterial {
+        const key = `${color}-${size}`;
+        let material = this.pointMaterials.get(key);
+        if (!material) {
+            material = new THREE.PointsMaterial({ color, size, sizeAttenuation: false });
+            this.pointMaterials.set(key, material);
+        }
+        return material;
+    }
+
+    clear(): void {
+        this.lineBasicMaterials.forEach(m => m.dispose());
+        this.lineDashedMaterials.forEach(m => m.dispose());
+        this.meshMaterials.forEach(m => m.dispose());
+        this.pointMaterials.forEach(m => m.dispose());
+
+        this.lineBasicMaterials.clear();
+        this.lineDashedMaterials.clear();
+        this.meshMaterials.clear();
+        this.pointMaterials.clear();
+    }
+}
+
 function aciToColor(aci: number): number {
     if (aci === COLOR_BYLAYER || aci === COLOR_BYBLOCK) {
         return 0xffffff; // Will be resolved by layer
@@ -88,6 +188,43 @@ export class DxfRenderer {
     private lastMousePos = { x: 0, y: 0 };
     private viewCenter = { x: 0, y: 0 };
     private viewWidth = 100;
+
+    // Box zoom state
+    private isBoxZooming = false;
+    private boxZoomStart = { x: 0, y: 0 };
+    private boxZoomEnd = { x: 0, y: 0 };
+    private selectionBox: HTMLDivElement | null = null;
+
+    // Selection and hover state
+    private raycaster: THREE.Raycaster;
+    private selectedEntities: Set<THREE.Object3D> = new Set();
+    private hoveredEntity: THREE.Object3D | null = null;
+    private originalMaterials: Map<THREE.Object3D, THREE.Material | THREE.Material[]> = new Map();
+
+    // Material cache for performance
+    private materialCache: MaterialCache = new MaterialCache();
+
+    // Snap markers
+    private snapGroup: THREE.Group;
+    private snapEnabled: boolean = true;
+    private activeSnapTypes: Set<SnapType> = new Set([
+        SnapType.ENDPOINT,
+        SnapType.MIDPOINT,
+        SnapType.CENTER
+    ]);
+    private snapRadius: number = 15; // pixels
+    private currentSnapPoint: SnapPoint | null = null;
+    private snapMarker: THREE.Group | null = null;
+
+    // Drawing mode
+    private drawingGroup: THREE.Group;
+    private drawingMode: DrawingMode = DrawingMode.NONE;
+    private drawingPoints: { x: number; y: number }[] = [];
+    private rubberBandLine: THREE.Line | null = null;
+    private rubberBandCircle: THREE.Line | null = null;
+    private currentDrawingLayer: string = '0';
+    private currentDrawingColor: number = 0xffffff;
+    private onDrawingComplete: ((entity: DxfEntity) => void) | null = null;
 
     constructor(container: HTMLElement) {
         this.container = container;
@@ -124,6 +261,22 @@ export class DxfRenderer {
         this.annotationGroup.name = 'annotations';
         this.scene.add(this.annotationGroup);
 
+        this.snapGroup = new THREE.Group();
+        this.snapGroup.name = 'snap-markers';
+        this.scene.add(this.snapGroup);
+
+        this.drawingGroup = new THREE.Group();
+        this.drawingGroup.name = 'drawing-preview';
+        this.scene.add(this.drawingGroup);
+
+        // Initialize raycaster for selection
+        this.raycaster = new THREE.Raycaster();
+        this.raycaster.params.Line = { threshold: 5 };  // Increase line picking threshold
+        this.raycaster.params.Points = { threshold: 5 };
+
+        // Create selection box element for box zoom
+        this.createSelectionBox();
+
         // Setup event listeners
         this.setupEventListeners();
 
@@ -135,6 +288,34 @@ export class DxfRenderer {
 
         // Initial render
         this.render();
+    }
+
+    private createSelectionBox(): void {
+        this.selectionBox = document.createElement('div');
+        this.selectionBox.id = 'selection-box';
+        this.container.appendChild(this.selectionBox);
+    }
+
+    private updateSelectionBox(): void {
+        if (!this.selectionBox) return;
+
+        const rect = this.container.getBoundingClientRect();
+        const left = Math.min(this.boxZoomStart.x, this.boxZoomEnd.x) - rect.left;
+        const top = Math.min(this.boxZoomStart.y, this.boxZoomEnd.y) - rect.top;
+        const width = Math.abs(this.boxZoomEnd.x - this.boxZoomStart.x);
+        const height = Math.abs(this.boxZoomEnd.y - this.boxZoomStart.y);
+
+        this.selectionBox.style.left = `${left}px`;
+        this.selectionBox.style.top = `${top}px`;
+        this.selectionBox.style.width = `${width}px`;
+        this.selectionBox.style.height = `${height}px`;
+        this.selectionBox.classList.add('visible');
+    }
+
+    private hideSelectionBox(): void {
+        if (this.selectionBox) {
+            this.selectionBox.classList.remove('visible');
+        }
     }
 
     private setupEventListeners(): void {
@@ -149,14 +330,31 @@ export class DxfRenderer {
         });
 
         canvas.addEventListener('mousedown', (e) => {
-            if (e.button === 0 || e.button === 1) {
+            if (e.button === 0) {
+                // Shift+drag = box zoom
+                if (e.shiftKey) {
+                    this.isBoxZooming = true;
+                    this.boxZoomStart = { x: e.clientX, y: e.clientY };
+                    this.boxZoomEnd = { x: e.clientX, y: e.clientY };
+                    this.container.classList.add('selecting');
+                    this.updateSelectionBox();
+                } else {
+                    this.isDragging = true;
+                    this.lastMousePos = { x: e.clientX, y: e.clientY };
+                }
+            } else if (e.button === 1) {
+                // Middle button = pan
                 this.isDragging = true;
                 this.lastMousePos = { x: e.clientX, y: e.clientY };
             }
         });
 
         canvas.addEventListener('mousemove', (e) => {
-            if (this.isDragging) {
+            if (this.isBoxZooming) {
+                // Update box zoom selection
+                this.boxZoomEnd = { x: e.clientX, y: e.clientY };
+                this.updateSelectionBox();
+            } else if (this.isDragging) {
                 const dx = e.clientX - this.lastMousePos.x;
                 const dy = e.clientY - this.lastMousePos.y;
 
@@ -168,18 +366,43 @@ export class DxfRenderer {
                 this.lastMousePos = { x: e.clientX, y: e.clientY };
                 this.updateCamera();
                 this.render();
+            } else {
+                // Hover detection
+                this.handleHover(e);
             }
 
             // Update coordinates display
             this.updateCoordinates(e);
         });
 
-        canvas.addEventListener('mouseup', () => {
+        canvas.addEventListener('mouseup', (e) => {
+            if (this.isBoxZooming) {
+                this.isBoxZooming = false;
+                this.container.classList.remove('selecting');
+                this.hideSelectionBox();
+
+                // Perform box zoom if selection is large enough
+                const dx = Math.abs(this.boxZoomEnd.x - this.boxZoomStart.x);
+                const dy = Math.abs(this.boxZoomEnd.y - this.boxZoomStart.y);
+                if (dx > 10 && dy > 10) {
+                    this.zoomToBox();
+                }
+            } else if (!this.isDragging) {
+                // Handle click for selection
+                this.handleClick(e);
+            }
             this.isDragging = false;
         });
 
         canvas.addEventListener('mouseleave', () => {
             this.isDragging = false;
+            if (this.isBoxZooming) {
+                this.isBoxZooming = false;
+                this.container.classList.remove('selecting');
+                this.hideSelectionBox();
+            }
+            // Clear hover state
+            this.clearHover();
         });
     }
 
@@ -267,16 +490,19 @@ export class DxfRenderer {
             color = this.getLayerColor(entity.layer, dxf);
         }
 
+        // Resolve linetype
+        const lineType = this.resolveLineType(entity, dxf);
+
         switch (entity.type) {
             case 'LINE':
-                return this.renderLine(entity as DxfLine, color);
+                return this.renderLine(entity as DxfLine, color, lineType);
             case 'CIRCLE':
-                return this.renderCircle(entity as DxfCircle, color);
+                return this.renderCircle(entity as DxfCircle, color, lineType);
             case 'ARC':
-                return this.renderArc(entity as DxfArc, color);
+                return this.renderArc(entity as DxfArc, color, lineType);
             case 'POLYLINE':
             case 'LWPOLYLINE':
-                return this.renderPolyline(entity as DxfPolyline, color);
+                return this.renderPolyline(entity as DxfPolyline, color, lineType);
             case 'TEXT':
             case 'MTEXT':
                 return this.renderText(entity as DxfText, color);
@@ -285,9 +511,9 @@ export class DxfRenderer {
             case 'INSERT':
                 return this.renderInsert(entity as DxfInsert, color, dxf);
             case 'ELLIPSE':
-                return this.renderEllipse(entity as DxfEllipse, color);
+                return this.renderEllipse(entity as DxfEllipse, color, lineType);
             case 'SPLINE':
-                return this.renderSpline(entity as DxfSpline, color);
+                return this.renderSpline(entity as DxfSpline, color, lineType);
             case 'HATCH':
                 return this.renderHatch(entity as DxfHatch, color);
             case 'DIMENSION':
@@ -315,7 +541,40 @@ export class DxfRenderer {
         return 0xffffff;
     }
 
-    private renderLine(line: DxfLine, color: number): THREE.Line {
+    private resolveLineType(entity: DxfEntity, dxf: ParsedDxf): DxfLineType | null {
+        // Use entity linetype if specified
+        let lineTypeName = entity.lineType?.toUpperCase();
+
+        // If BYLAYER or not specified, get from layer
+        if (!lineTypeName || lineTypeName === 'BYLAYER') {
+            const layer = dxf.layers.get(entity.layer);
+            if (layer?.lineType) {
+                lineTypeName = layer.lineType.toUpperCase();
+            }
+        }
+
+        // If still not found or CONTINUOUS, return null (solid line)
+        if (!lineTypeName || lineTypeName === 'CONTINUOUS' || lineTypeName === 'BYBLOCK') {
+            return null;
+        }
+
+        return dxf.lineTypes.get(lineTypeName) || null;
+    }
+
+    private createLineMaterial(color: number, lineType: DxfLineType | null): THREE.Material {
+        if (!lineType || lineType.pattern.length === 0) {
+            return this.materialCache.getLineBasicMaterial(color);
+        }
+
+        // Calculate dash and gap sizes from pattern
+        // Pattern elements: positive=dash, negative=gap, 0=dot
+        const dashSize = lineType.pattern.find(p => p > 0) || 1;
+        const gapSize = Math.abs(lineType.pattern.find(p => p < 0) || 0) || dashSize * 0.5;
+
+        return this.materialCache.getLineDashedMaterial(color, Math.abs(dashSize), Math.abs(gapSize));
+    }
+
+    private renderLine(line: DxfLine, color: number, lineType: DxfLineType | null): THREE.Line {
         const geometry = new THREE.BufferGeometry();
         const points = [
             new THREE.Vector3(line.start.x, line.start.y, 0),
@@ -323,11 +582,18 @@ export class DxfRenderer {
         ];
         geometry.setFromPoints(points);
 
-        const material = new THREE.LineBasicMaterial({ color });
-        return new THREE.Line(geometry, material);
+        const material = this.createLineMaterial(color, lineType);
+        const lineObj = new THREE.Line(geometry, material);
+
+        // Compute line distances for dashed lines
+        if (material instanceof THREE.LineDashedMaterial) {
+            lineObj.computeLineDistances();
+        }
+
+        return lineObj;
     }
 
-    private renderCircle(circle: DxfCircle, color: number): THREE.Line {
+    private renderCircle(circle: DxfCircle, color: number, lineType: DxfLineType | null): THREE.Line {
         const segments = 64;
         const geometry = new THREE.BufferGeometry();
         const points: THREE.Vector3[] = [];
@@ -342,11 +608,17 @@ export class DxfRenderer {
         }
 
         geometry.setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color });
-        return new THREE.Line(geometry, material);
+        const material = this.createLineMaterial(color, lineType);
+        const lineObj = new THREE.Line(geometry, material);
+
+        if (material instanceof THREE.LineDashedMaterial) {
+            lineObj.computeLineDistances();
+        }
+
+        return lineObj;
     }
 
-    private renderArc(arc: DxfArc, color: number): THREE.Line {
+    private renderArc(arc: DxfArc, color: number, lineType: DxfLineType | null): THREE.Line {
         const segments = 64;
         const geometry = new THREE.BufferGeometry();
         const points: THREE.Vector3[] = [];
@@ -373,11 +645,17 @@ export class DxfRenderer {
         }
 
         geometry.setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color });
-        return new THREE.Line(geometry, material);
+        const material = this.createLineMaterial(color, lineType);
+        const lineObj = new THREE.Line(geometry, material);
+
+        if (material instanceof THREE.LineDashedMaterial) {
+            lineObj.computeLineDistances();
+        }
+
+        return lineObj;
     }
 
-    private renderPolyline(polyline: DxfPolyline, color: number): THREE.Line {
+    private renderPolyline(polyline: DxfPolyline, color: number, lineType: DxfLineType | null): THREE.Line {
         if (polyline.vertices.length < 2) {
             return new THREE.Line();
         }
@@ -390,8 +668,14 @@ export class DxfRenderer {
         }
 
         geometry.setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color });
-        return new THREE.Line(geometry, material);
+        const material = this.createLineMaterial(color, lineType);
+        const lineObj = new THREE.Line(geometry, material);
+
+        if (material instanceof THREE.LineDashedMaterial) {
+            lineObj.computeLineDistances();
+        }
+
+        return lineObj;
     }
 
     // Font stack that supports Korean, Japanese, Chinese and Western characters
@@ -502,7 +786,7 @@ export class DxfRenderer {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.Float32BufferAttribute([point.position.x, point.position.y, 0], 3));
 
-        const material = new THREE.PointsMaterial({ color, size: 5, sizeAttenuation: false });
+        const material = this.materialCache.getPointMaterial(color, 5);
         return new THREE.Points(geometry, material);
     }
 
@@ -533,7 +817,7 @@ export class DxfRenderer {
         return group;
     }
 
-    private renderEllipse(ellipse: DxfEllipse, color: number): THREE.Line {
+    private renderEllipse(ellipse: DxfEllipse, color: number, lineType: DxfLineType | null): THREE.Line {
         const segments = 64;
         const geometry = new THREE.BufferGeometry();
         const points: THREE.Vector3[] = [];
@@ -572,11 +856,17 @@ export class DxfRenderer {
         }
 
         geometry.setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color });
-        return new THREE.Line(geometry, material);
+        const material = this.createLineMaterial(color, lineType);
+        const lineObj = new THREE.Line(geometry, material);
+
+        if (material instanceof THREE.LineDashedMaterial) {
+            lineObj.computeLineDistances();
+        }
+
+        return lineObj;
     }
 
-    private renderSpline(spline: DxfSpline, color: number): THREE.Line {
+    private renderSpline(spline: DxfSpline, color: number, lineType: DxfLineType | null): THREE.Line {
         const geometry = new THREE.BufferGeometry();
         const points: THREE.Vector3[] = [];
 
@@ -606,8 +896,14 @@ export class DxfRenderer {
         }
 
         geometry.setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color });
-        return new THREE.Line(geometry, material);
+        const material = this.createLineMaterial(color, lineType);
+        const lineObj = new THREE.Line(geometry, material);
+
+        if (material instanceof THREE.LineDashedMaterial) {
+            lineObj.computeLineDistances();
+        }
+
+        return lineObj;
     }
 
     private interpolateSpline(points: { x: number; y: number }[], t: number, closed: boolean): { x: number; y: number } {
@@ -656,6 +952,7 @@ export class DxfRenderer {
         const group = new THREE.Group();
 
         // Render each boundary path as a closed polyline
+        const lineMaterial = this.materialCache.getLineBasicMaterial(color);
         for (const path of hatch.boundaryPaths) {
             if (path.length < 2) continue;
 
@@ -663,12 +960,12 @@ export class DxfRenderer {
             points.push(points[0].clone()); // Close the path
 
             const geometry = new THREE.BufferGeometry().setFromPoints(points);
-            const material = new THREE.LineBasicMaterial({ color });
-            group.add(new THREE.Line(geometry, material));
+            group.add(new THREE.Line(geometry, lineMaterial));
         }
 
-        // For solid hatches, try to fill with a mesh
+        // For solid hatches, fill with a mesh
         if (hatch.solid && hatch.boundaryPaths.length > 0) {
+            const fillMaterial = this.materialCache.getMeshMaterial(color, 0.3, true);
             for (const path of hatch.boundaryPaths) {
                 if (path.length >= 3) {
                     try {
@@ -680,12 +977,6 @@ export class DxfRenderer {
                         shape.closePath();
 
                         const shapeGeometry = new THREE.ShapeGeometry(shape);
-                        const fillMaterial = new THREE.MeshBasicMaterial({
-                            color,
-                            transparent: true,
-                            opacity: 0.3,
-                            side: THREE.DoubleSide
-                        });
                         const mesh = new THREE.Mesh(shapeGeometry, fillMaterial);
                         mesh.position.z = -0.01; // Slightly behind lines
                         group.add(mesh);
@@ -694,9 +985,291 @@ export class DxfRenderer {
                     }
                 }
             }
+        } else if (!hatch.solid && hatch.patternName) {
+            // Non-solid hatches: draw pattern lines
+            this.renderHatchPattern(hatch, color, group);
         }
 
         return group;
+    }
+
+    private renderHatchPattern(hatch: DxfHatch, color: number, group: THREE.Group): void {
+        // Get bounding box for the hatch
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const path of hatch.boundaryPaths) {
+            for (const p of path) {
+                minX = Math.min(minX, p.x);
+                minY = Math.min(minY, p.y);
+                maxX = Math.max(maxX, p.x);
+                maxY = Math.max(maxY, p.y);
+            }
+        }
+
+        if (!isFinite(minX)) return;
+
+        const width = maxX - minX;
+        const height = maxY - minY;
+        const size = Math.max(width, height);
+        if (size < 0.001) return;
+
+        // Determine pattern spacing based on pattern name
+        const spacing = this.getHatchPatternSpacing(hatch.patternName, size);
+        const angle = this.getHatchPatternAngle(hatch.patternName);
+
+        // Create pattern lines
+        const lineMaterial = this.materialCache.getLineBasicMaterial(color);
+
+        // Generate lines at the specified angle
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const diagonal = Math.sqrt(width * width + height * height) * 1.5;
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        const numLines = Math.ceil(diagonal / spacing);
+
+        // Generate and clip lines for each boundary path
+        for (const boundaryPath of hatch.boundaryPaths) {
+            if (boundaryPath.length < 3) continue;
+
+            for (let i = -numLines; i <= numLines; i++) {
+                const offset = i * spacing;
+
+                // Line perpendicular to angle direction
+                const perpX = -sin * offset;
+                const perpY = cos * offset;
+
+                const startX = centerX + perpX - cos * diagonal;
+                const startY = centerY + perpY - sin * diagonal;
+                const endX = centerX + perpX + cos * diagonal;
+                const endY = centerY + perpY + sin * diagonal;
+
+                // Clip line to boundary polygon
+                const clippedSegments = this.clipLineToPolygon(
+                    { x: startX, y: startY },
+                    { x: endX, y: endY },
+                    boundaryPath
+                );
+
+                // Add clipped line segments
+                for (const segment of clippedSegments) {
+                    const points = [
+                        new THREE.Vector3(segment.start.x, segment.start.y, -0.005),
+                        new THREE.Vector3(segment.end.x, segment.end.y, -0.005)
+                    ];
+                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                    group.add(new THREE.Line(geometry, lineMaterial));
+                }
+            }
+
+            // Add cross-hatching for certain patterns
+            if (this.isCrossHatchPattern(hatch.patternName)) {
+                const crossAngle = angle + Math.PI / 2;
+                const crossCos = Math.cos(crossAngle);
+                const crossSin = Math.sin(crossAngle);
+
+                for (let i = -numLines; i <= numLines; i++) {
+                    const offset = i * spacing;
+
+                    const perpX = -crossSin * offset;
+                    const perpY = crossCos * offset;
+
+                    const startX = centerX + perpX - crossCos * diagonal;
+                    const startY = centerY + perpY - crossSin * diagonal;
+                    const endX = centerX + perpX + crossCos * diagonal;
+                    const endY = centerY + perpY + crossSin * diagonal;
+
+                    // Clip line to boundary polygon
+                    const clippedSegments = this.clipLineToPolygon(
+                        { x: startX, y: startY },
+                        { x: endX, y: endY },
+                        boundaryPath
+                    );
+
+                    // Add clipped line segments
+                    for (const segment of clippedSegments) {
+                        const points = [
+                            new THREE.Vector3(segment.start.x, segment.start.y, -0.005),
+                            new THREE.Vector3(segment.end.x, segment.end.y, -0.005)
+                        ];
+                        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                        group.add(new THREE.Line(geometry, lineMaterial));
+                    }
+                }
+            }
+        }
+    }
+
+    // Clip a line segment to a polygon boundary
+    private clipLineToPolygon(
+        lineStart: { x: number; y: number },
+        lineEnd: { x: number; y: number },
+        polygon: { x: number; y: number }[]
+    ): Array<{ start: { x: number; y: number }; end: { x: number; y: number } }> {
+        const result: Array<{ start: { x: number; y: number }; end: { x: number; y: number } }> = [];
+
+        // Find all intersection points with polygon edges
+        const intersections: { t: number; point: { x: number; y: number } }[] = [];
+
+        const dx = lineEnd.x - lineStart.x;
+        const dy = lineEnd.y - lineStart.y;
+
+        for (let i = 0; i < polygon.length; i++) {
+            const p1 = polygon[i];
+            const p2 = polygon[(i + 1) % polygon.length];
+
+            const intersection = this.lineSegmentIntersection(
+                lineStart, lineEnd, p1, p2
+            );
+
+            if (intersection) {
+                // Calculate parameter t along the line
+                const t = Math.abs(dx) > Math.abs(dy)
+                    ? (intersection.x - lineStart.x) / dx
+                    : (intersection.y - lineStart.y) / dy;
+
+                if (t >= 0 && t <= 1) {
+                    intersections.push({ t, point: intersection });
+                }
+            }
+        }
+
+        // Sort intersections by parameter t
+        intersections.sort((a, b) => a.t - b.t);
+
+        // Check if start point is inside polygon
+        const startInside = this.isPointInPolygon(lineStart, polygon);
+
+        // Build segments that are inside the polygon
+        let inside = startInside;
+        let currentStart = lineStart;
+
+        for (const intersection of intersections) {
+            if (inside) {
+                // We're inside, so add segment from currentStart to intersection
+                result.push({
+                    start: { ...currentStart },
+                    end: { ...intersection.point }
+                });
+            }
+            // Toggle inside/outside state
+            inside = !inside;
+            currentStart = intersection.point;
+        }
+
+        // If we end inside the polygon, add final segment
+        if (inside) {
+            result.push({
+                start: { ...currentStart },
+                end: { ...lineEnd }
+            });
+        }
+
+        return result;
+    }
+
+    // Calculate intersection point of two line segments
+    private lineSegmentIntersection(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        p3: { x: number; y: number },
+        p4: { x: number; y: number }
+    ): { x: number; y: number } | null {
+        const d1x = p2.x - p1.x;
+        const d1y = p2.y - p1.y;
+        const d2x = p4.x - p3.x;
+        const d2y = p4.y - p3.y;
+
+        const cross = d1x * d2y - d1y * d2x;
+
+        // Lines are parallel
+        if (Math.abs(cross) < 1e-10) {
+            return null;
+        }
+
+        const dx = p3.x - p1.x;
+        const dy = p3.y - p1.y;
+
+        const t = (dx * d2y - dy * d2x) / cross;
+        const u = (dx * d1y - dy * d1x) / cross;
+
+        // Check if intersection is within both segments
+        if (u >= 0 && u <= 1) {
+            return {
+                x: p1.x + t * d1x,
+                y: p1.y + t * d1y
+            };
+        }
+
+        return null;
+    }
+
+    // Check if a point is inside a polygon using ray casting
+    private isPointInPolygon(point: { x: number; y: number }, polygon: { x: number; y: number }[]): boolean {
+        let inside = false;
+        const n = polygon.length;
+
+        for (let i = 0, j = n - 1; i < n; j = i++) {
+            const xi = polygon[i].x, yi = polygon[i].y;
+            const xj = polygon[j].x, yj = polygon[j].y;
+
+            if (((yi > point.y) !== (yj > point.y)) &&
+                (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
+                inside = !inside;
+            }
+        }
+
+        return inside;
+    }
+
+    private getHatchPatternSpacing(patternName: string, size: number): number {
+        // Base spacing relative to bounding box size
+        const baseSpacing = size / 20;
+
+        const name = patternName.toUpperCase();
+        switch (name) {
+            case 'ANSI31':
+            case 'ANSI32':
+            case 'ANSI33':
+            case 'ANSI34':
+            case 'ANSI35':
+            case 'ANSI36':
+            case 'ANSI37':
+            case 'ANSI38':
+                return baseSpacing;
+            case 'BRICK':
+            case 'STONE':
+                return baseSpacing * 2;
+            case 'GRASS':
+            case 'SAND':
+                return baseSpacing * 0.5;
+            default:
+                return baseSpacing;
+        }
+    }
+
+    private getHatchPatternAngle(patternName: string): number {
+        const name = patternName.toUpperCase();
+        switch (name) {
+            case 'ANSI31':  // 45 degrees
+            case 'ANSI34':
+            case 'ANSI37':
+                return Math.PI / 4;
+            case 'ANSI32':  // 45 degrees (cross-hatch)
+            case 'ANSI35':
+            case 'ANSI38':
+                return Math.PI / 4;
+            case 'ANSI33':  // Horizontal
+            case 'ANSI36':
+                return 0;
+            default:
+                return Math.PI / 4;  // Default 45 degrees
+        }
+    }
+
+    private isCrossHatchPattern(patternName: string): boolean {
+        const name = patternName.toUpperCase();
+        return ['ANSI32', 'ANSI35', 'ANSI38', 'CROSS', 'HATCH', 'BRICK'].includes(name);
     }
 
     private renderDimension(dimension: DxfDimension, color: number, dxf: ParsedDxf): THREE.Group {
@@ -723,8 +1296,7 @@ export class DxfRenderer {
             new THREE.Vector3(dimension.definitionPoint.x, dimension.definitionPoint.y, 0),
             new THREE.Vector3(dimension.middlePoint.x, dimension.middlePoint.y, 0)
         ]);
-        const lineMaterial = new THREE.LineBasicMaterial({ color });
-        group.add(new THREE.Line(lineGeometry, lineMaterial));
+        group.add(new THREE.Line(lineGeometry, this.materialCache.getLineBasicMaterial(color)));
 
         // Draw dimension text if present
         if (dimension.text) {
@@ -904,7 +1476,7 @@ export class DxfRenderer {
         // Draw leader line
         const points = leader.vertices.map(v => new THREE.Vector3(v.x, v.y, 0));
         const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
-        const lineMaterial = new THREE.LineBasicMaterial({ color });
+        const lineMaterial = this.materialCache.getLineBasicMaterial(color);
         group.add(new THREE.Line(lineGeometry, lineMaterial));
 
         // Draw arrowhead if enabled
@@ -1111,6 +1683,1110 @@ export class DxfRenderer {
     }
 
     dispose(): void {
+        this.materialCache.clear();
         this.renderer.dispose();
+    }
+
+    // ========== Box Zoom ==========
+
+    private zoomToBox(): void {
+        const rect = this.container.getBoundingClientRect();
+
+        // Convert screen coordinates to normalized device coordinates
+        const startX = (Math.min(this.boxZoomStart.x, this.boxZoomEnd.x) - rect.left) / rect.width;
+        const startY = (Math.min(this.boxZoomStart.y, this.boxZoomEnd.y) - rect.top) / rect.height;
+        const endX = (Math.max(this.boxZoomStart.x, this.boxZoomEnd.x) - rect.left) / rect.width;
+        const endY = (Math.max(this.boxZoomStart.y, this.boxZoomEnd.y) - rect.top) / rect.height;
+
+        // Convert to world coordinates
+        const aspect = this.container.clientWidth / this.container.clientHeight;
+        const halfWidth = this.viewWidth / 2;
+        const halfHeight = halfWidth / aspect;
+
+        const worldMinX = this.viewCenter.x - halfWidth + startX * this.viewWidth;
+        const worldMaxX = this.viewCenter.x - halfWidth + endX * this.viewWidth;
+        const worldMaxY = this.viewCenter.y + halfHeight - startY * (this.viewWidth / aspect);
+        const worldMinY = this.viewCenter.y + halfHeight - endY * (this.viewWidth / aspect);
+
+        // Set new view center and width
+        const newWidth = worldMaxX - worldMinX;
+        const newHeight = worldMaxY - worldMinY;
+
+        this.viewCenter.x = (worldMinX + worldMaxX) / 2;
+        this.viewCenter.y = (worldMinY + worldMaxY) / 2;
+        this.viewWidth = Math.max(newWidth, newHeight * aspect) * 1.05; // 5% padding
+
+        this.updateCamera();
+        this.render();
+    }
+
+    // ========== Hover and Selection ==========
+
+    private screenToNDC(e: MouseEvent): THREE.Vector2 {
+        const rect = this.container.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        return new THREE.Vector2(x, y);
+    }
+
+    private handleHover(e: MouseEvent): void {
+        const ndc = this.screenToNDC(e);
+        this.raycaster.setFromCamera(ndc, this.camera);
+
+        const intersects = this.raycaster.intersectObjects(this.entityGroup.children, true);
+
+        if (intersects.length > 0) {
+            const hitObject = this.findEntityRoot(intersects[0].object);
+
+            if (hitObject !== this.hoveredEntity) {
+                // Clear previous hover
+                this.clearHover();
+
+                // Set new hover
+                this.hoveredEntity = hitObject;
+                this.highlightEntity(hitObject, 0x00ffff); // Cyan for hover
+                this.container.classList.add('hovering');
+                this.showEntityInfo(hitObject, e);
+                this.render();
+            }
+        } else {
+            this.clearHover();
+        }
+    }
+
+    private clearHover(): void {
+        if (this.hoveredEntity) {
+            // Restore original material if not selected
+            if (!this.selectedEntities.has(this.hoveredEntity)) {
+                this.restoreEntityMaterial(this.hoveredEntity);
+            }
+            this.hoveredEntity = null;
+            this.container.classList.remove('hovering');
+            this.hideEntityInfo();
+            this.render();
+        }
+    }
+
+    private handleClick(e: MouseEvent): void {
+        const ndc = this.screenToNDC(e);
+        this.raycaster.setFromCamera(ndc, this.camera);
+
+        const intersects = this.raycaster.intersectObjects(this.entityGroup.children, true);
+
+        if (intersects.length > 0) {
+            const hitObject = this.findEntityRoot(intersects[0].object);
+
+            if (e.ctrlKey || e.metaKey) {
+                // Toggle selection with Ctrl/Cmd
+                if (this.selectedEntities.has(hitObject)) {
+                    this.deselectEntity(hitObject);
+                } else {
+                    this.selectEntity(hitObject);
+                }
+            } else {
+                // Single selection
+                this.clearSelection();
+                this.selectEntity(hitObject);
+            }
+        } else {
+            // Click on empty space - clear selection
+            if (!e.ctrlKey && !e.metaKey) {
+                this.clearSelection();
+            }
+        }
+
+        this.updateSelectionStatus();
+        this.render();
+    }
+
+    private findEntityRoot(object: THREE.Object3D): THREE.Object3D {
+        // Walk up to find the root entity object
+        let current = object;
+        while (current.parent && current.parent !== this.entityGroup) {
+            current = current.parent;
+        }
+        return current;
+    }
+
+    private selectEntity(object: THREE.Object3D): void {
+        this.selectedEntities.add(object);
+        this.highlightEntity(object, 0xffff00); // Yellow for selection
+    }
+
+    private deselectEntity(object: THREE.Object3D): void {
+        this.selectedEntities.delete(object);
+        this.restoreEntityMaterial(object);
+    }
+
+    clearSelection(): void {
+        for (const entity of this.selectedEntities) {
+            this.restoreEntityMaterial(entity);
+        }
+        this.selectedEntities.clear();
+        this.updateSelectionStatus();
+        this.render();
+    }
+
+    private highlightEntity(object: THREE.Object3D, color: number): void {
+        object.traverse((child) => {
+            if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                // Store original material if not already stored
+                if (!this.originalMaterials.has(child)) {
+                    this.originalMaterials.set(child, child.material);
+                }
+
+                // Apply highlight color
+                if (child.material instanceof THREE.LineBasicMaterial) {
+                    child.material = new THREE.LineBasicMaterial({ color });
+                } else if (child.material instanceof THREE.PointsMaterial) {
+                    child.material = new THREE.PointsMaterial({
+                        color,
+                        size: (child.material as THREE.PointsMaterial).size,
+                        sizeAttenuation: false
+                    });
+                } else if (child.material instanceof THREE.MeshBasicMaterial) {
+                    child.material = new THREE.MeshBasicMaterial({
+                        color,
+                        side: THREE.DoubleSide,
+                        transparent: true,
+                        opacity: 0.6
+                    });
+                }
+            }
+        });
+    }
+
+    private restoreEntityMaterial(object: THREE.Object3D): void {
+        object.traverse((child) => {
+            const original = this.originalMaterials.get(child);
+            if (original) {
+                if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                    child.material = original;
+                }
+                this.originalMaterials.delete(child);
+            }
+        });
+    }
+
+    private showEntityInfo(object: THREE.Object3D, e: MouseEvent): void {
+        const entity = object.userData.entity;
+        if (!entity) return;
+
+        let infoEl = document.getElementById('entity-info');
+        if (!infoEl) {
+            infoEl = document.createElement('div');
+            infoEl.id = 'entity-info';
+            this.container.appendChild(infoEl);
+        }
+
+        // Build info content
+        const rows: string[] = [];
+        rows.push(`<div class="info-row"><span class="info-label">Type:</span><span class="info-value">${entity.type}</span></div>`);
+        rows.push(`<div class="info-row"><span class="info-label">Layer:</span><span class="info-value">${entity.layer}</span></div>`);
+        if (entity.handle) {
+            rows.push(`<div class="info-row"><span class="info-label">Handle:</span><span class="info-value">${entity.handle}</span></div>`);
+        }
+
+        // Type-specific info
+        this.addEntitySpecificInfo(entity, rows);
+
+        infoEl.innerHTML = rows.join('');
+
+        // Position tooltip near mouse
+        const rect = this.container.getBoundingClientRect();
+        const x = e.clientX - rect.left + 15;
+        const y = e.clientY - rect.top + 15;
+
+        // Keep tooltip within bounds
+        infoEl.style.left = `${Math.min(x, rect.width - 220)}px`;
+        infoEl.style.top = `${Math.min(y, rect.height - 150)}px`;
+        infoEl.classList.add('visible');
+    }
+
+    private addEntitySpecificInfo(entity: any, rows: string[]): void {
+        switch (entity.type) {
+            case 'LINE':
+                rows.push(`<div class="info-row"><span class="info-label">Start:</span><span class="info-value">(${entity.start.x.toFixed(2)}, ${entity.start.y.toFixed(2)})</span></div>`);
+                rows.push(`<div class="info-row"><span class="info-label">End:</span><span class="info-value">(${entity.end.x.toFixed(2)}, ${entity.end.y.toFixed(2)})</span></div>`);
+                break;
+            case 'CIRCLE':
+                rows.push(`<div class="info-row"><span class="info-label">Center:</span><span class="info-value">(${entity.center.x.toFixed(2)}, ${entity.center.y.toFixed(2)})</span></div>`);
+                rows.push(`<div class="info-row"><span class="info-label">Radius:</span><span class="info-value">${entity.radius.toFixed(2)}</span></div>`);
+                break;
+            case 'ARC':
+                rows.push(`<div class="info-row"><span class="info-label">Center:</span><span class="info-value">(${entity.center.x.toFixed(2)}, ${entity.center.y.toFixed(2)})</span></div>`);
+                rows.push(`<div class="info-row"><span class="info-label">Radius:</span><span class="info-value">${entity.radius.toFixed(2)}</span></div>`);
+                rows.push(`<div class="info-row"><span class="info-label">Angles:</span><span class="info-value">${entity.startAngle.toFixed(1)}° → ${entity.endAngle.toFixed(1)}°</span></div>`);
+                break;
+            case 'TEXT':
+            case 'MTEXT':
+                rows.push(`<div class="info-row"><span class="info-label">Text:</span><span class="info-value">${entity.text.substring(0, 20)}${entity.text.length > 20 ? '...' : ''}</span></div>`);
+                rows.push(`<div class="info-row"><span class="info-label">Height:</span><span class="info-value">${entity.height.toFixed(2)}</span></div>`);
+                break;
+            case 'POLYLINE':
+            case 'LWPOLYLINE':
+                rows.push(`<div class="info-row"><span class="info-label">Vertices:</span><span class="info-value">${entity.vertices.length}</span></div>`);
+                rows.push(`<div class="info-row"><span class="info-label">Closed:</span><span class="info-value">${entity.closed ? 'Yes' : 'No'}</span></div>`);
+                break;
+            case 'INSERT':
+                rows.push(`<div class="info-row"><span class="info-label">Block:</span><span class="info-value">${entity.blockName}</span></div>`);
+                rows.push(`<div class="info-row"><span class="info-label">Position:</span><span class="info-value">(${entity.position.x.toFixed(2)}, ${entity.position.y.toFixed(2)})</span></div>`);
+                break;
+        }
+    }
+
+    private hideEntityInfo(): void {
+        const infoEl = document.getElementById('entity-info');
+        if (infoEl) {
+            infoEl.classList.remove('visible');
+        }
+    }
+
+    private updateSelectionStatus(): void {
+        const statusEl = document.getElementById('status-text');
+        if (!statusEl) return;
+
+        if (this.selectedEntities.size === 0) {
+            statusEl.textContent = this.parsedDxf
+                ? `Loaded: ${this.parsedDxf.entities.length} entities`
+                : 'Ready';
+        } else if (this.selectedEntities.size === 1) {
+            const entity = Array.from(this.selectedEntities)[0].userData.entity;
+            if (entity) {
+                statusEl.textContent = `Selected: ${entity.type} on layer "${entity.layer}"`;
+            }
+        } else {
+            statusEl.textContent = `Selected: ${this.selectedEntities.size} entities`;
+        }
+    }
+
+    getSelectedEntities(): THREE.Object3D[] {
+        return Array.from(this.selectedEntities);
+    }
+
+    // ========== Entity Deletion ==========
+
+    deleteSelectedEntities(): number {
+        const count = this.selectedEntities.size;
+        if (count === 0) return 0;
+
+        for (const entity of this.selectedEntities) {
+            // Remove from scene
+            this.entityGroup.remove(entity);
+
+            // Clean up materials
+            this.originalMaterials.delete(entity);
+
+            // Dispose geometry
+            entity.traverse((child) => {
+                if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                    child.geometry.dispose();
+                }
+            });
+
+            // Remove from parsed DXF data if needed
+            if (entity.userData.entity && this.parsedDxf) {
+                const idx = this.parsedDxf.entities.indexOf(entity.userData.entity);
+                if (idx !== -1) {
+                    this.parsedDxf.entities.splice(idx, 1);
+                }
+            }
+        }
+
+        this.selectedEntities.clear();
+        this.updateSelectionStatus();
+        this.render();
+
+        return count;
+    }
+
+    // Delete entity by reference
+    deleteEntity(object: THREE.Object3D): boolean {
+        if (!this.entityGroup.children.includes(object)) {
+            return false;
+        }
+
+        // Remove from selection if selected
+        if (this.selectedEntities.has(object)) {
+            this.selectedEntities.delete(object);
+        }
+
+        // Remove from scene
+        this.entityGroup.remove(object);
+
+        // Clean up
+        this.originalMaterials.delete(object);
+        object.traverse((child) => {
+            if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                child.geometry.dispose();
+            }
+        });
+
+        // Remove from parsed DXF
+        if (object.userData.entity && this.parsedDxf) {
+            const idx = this.parsedDxf.entities.indexOf(object.userData.entity);
+            if (idx !== -1) {
+                this.parsedDxf.entities.splice(idx, 1);
+            }
+        }
+
+        this.updateSelectionStatus();
+        this.render();
+        return true;
+    }
+
+    // ========== Snap Markers ==========
+
+    setSnapEnabled(enabled: boolean): void {
+        this.snapEnabled = enabled;
+        if (!enabled) {
+            this.clearSnapMarker();
+        }
+    }
+
+    isSnapEnabled(): boolean {
+        return this.snapEnabled;
+    }
+
+    setActiveSnapTypes(types: SnapType[]): void {
+        this.activeSnapTypes = new Set(types);
+    }
+
+    getActiveSnapTypes(): SnapType[] {
+        return Array.from(this.activeSnapTypes);
+    }
+
+    getCurrentSnapPoint(): SnapPoint | null {
+        return this.currentSnapPoint;
+    }
+
+    // Find snap points near a world position
+    findSnapPointsNear(worldX: number, worldY: number): SnapPoint[] {
+        if (!this.parsedDxf || !this.snapEnabled) {
+            return [];
+        }
+
+        const snapPoints: SnapPoint[] = [];
+        const snapRadiusWorld = this.screenToWorldDistance(this.snapRadius);
+
+        for (const object of this.entityGroup.children) {
+            if (!object.visible) continue;
+
+            const entity = object.userData.entity;
+            if (!entity) continue;
+
+            const points = this.getEntitySnapPoints(entity, object);
+            for (const point of points) {
+                if (!this.activeSnapTypes.has(point.type)) continue;
+
+                const dx = point.position.x - worldX;
+                const dy = point.position.y - worldY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist <= snapRadiusWorld) {
+                    snapPoints.push(point);
+                }
+            }
+        }
+
+        // Sort by distance
+        snapPoints.sort((a, b) => {
+            const distA = Math.sqrt(
+                Math.pow(a.position.x - worldX, 2) +
+                Math.pow(a.position.y - worldY, 2)
+            );
+            const distB = Math.sqrt(
+                Math.pow(b.position.x - worldX, 2) +
+                Math.pow(b.position.y - worldY, 2)
+            );
+            return distA - distB;
+        });
+
+        return snapPoints;
+    }
+
+    // Convert screen distance to world distance
+    private screenToWorldDistance(pixels: number): number {
+        return (pixels / this.container.clientWidth) * this.viewWidth;
+    }
+
+    // Get snap points for an entity
+    private getEntitySnapPoints(entity: DxfEntity, object: THREE.Object3D): SnapPoint[] {
+        const points: SnapPoint[] = [];
+
+        switch (entity.type) {
+            case 'LINE': {
+                const line = entity as DxfLine;
+                // Endpoints
+                points.push({
+                    type: SnapType.ENDPOINT,
+                    position: { x: line.start.x, y: line.start.y },
+                    entity: object
+                });
+                points.push({
+                    type: SnapType.ENDPOINT,
+                    position: { x: line.end.x, y: line.end.y },
+                    entity: object
+                });
+                // Midpoint
+                points.push({
+                    type: SnapType.MIDPOINT,
+                    position: {
+                        x: (line.start.x + line.end.x) / 2,
+                        y: (line.start.y + line.end.y) / 2
+                    },
+                    entity: object
+                });
+                break;
+            }
+
+            case 'CIRCLE': {
+                const circle = entity as DxfCircle;
+                // Center
+                points.push({
+                    type: SnapType.CENTER,
+                    position: { x: circle.center.x, y: circle.center.y },
+                    entity: object
+                });
+                // Quadrant points
+                points.push({
+                    type: SnapType.QUADRANT,
+                    position: { x: circle.center.x + circle.radius, y: circle.center.y },
+                    entity: object
+                });
+                points.push({
+                    type: SnapType.QUADRANT,
+                    position: { x: circle.center.x - circle.radius, y: circle.center.y },
+                    entity: object
+                });
+                points.push({
+                    type: SnapType.QUADRANT,
+                    position: { x: circle.center.x, y: circle.center.y + circle.radius },
+                    entity: object
+                });
+                points.push({
+                    type: SnapType.QUADRANT,
+                    position: { x: circle.center.x, y: circle.center.y - circle.radius },
+                    entity: object
+                });
+                break;
+            }
+
+            case 'ARC': {
+                const arc = entity as DxfArc;
+                // Center
+                points.push({
+                    type: SnapType.CENTER,
+                    position: { x: arc.center.x, y: arc.center.y },
+                    entity: object
+                });
+                // Arc endpoints
+                const startRad = arc.startAngle * Math.PI / 180;
+                const endRad = arc.endAngle * Math.PI / 180;
+                points.push({
+                    type: SnapType.ENDPOINT,
+                    position: {
+                        x: arc.center.x + Math.cos(startRad) * arc.radius,
+                        y: arc.center.y + Math.sin(startRad) * arc.radius
+                    },
+                    entity: object
+                });
+                points.push({
+                    type: SnapType.ENDPOINT,
+                    position: {
+                        x: arc.center.x + Math.cos(endRad) * arc.radius,
+                        y: arc.center.y + Math.sin(endRad) * arc.radius
+                    },
+                    entity: object
+                });
+                // Midpoint of arc
+                let midAngle = (startRad + endRad) / 2;
+                if (endRad < startRad) {
+                    midAngle = (startRad + endRad + Math.PI * 2) / 2;
+                }
+                points.push({
+                    type: SnapType.MIDPOINT,
+                    position: {
+                        x: arc.center.x + Math.cos(midAngle) * arc.radius,
+                        y: arc.center.y + Math.sin(midAngle) * arc.radius
+                    },
+                    entity: object
+                });
+                break;
+            }
+
+            case 'POLYLINE':
+            case 'LWPOLYLINE': {
+                const polyline = entity as DxfPolyline;
+                // Vertex endpoints
+                for (const vertex of polyline.vertices) {
+                    points.push({
+                        type: SnapType.ENDPOINT,
+                        position: { x: vertex.x, y: vertex.y },
+                        entity: object
+                    });
+                }
+                // Midpoints between vertices
+                for (let i = 0; i < polyline.vertices.length - 1; i++) {
+                    const v1 = polyline.vertices[i];
+                    const v2 = polyline.vertices[i + 1];
+                    points.push({
+                        type: SnapType.MIDPOINT,
+                        position: { x: (v1.x + v2.x) / 2, y: (v1.y + v2.y) / 2 },
+                        entity: object
+                    });
+                }
+                // Closing segment midpoint
+                if (polyline.closed && polyline.vertices.length > 2) {
+                    const first = polyline.vertices[0];
+                    const last = polyline.vertices[polyline.vertices.length - 1];
+                    points.push({
+                        type: SnapType.MIDPOINT,
+                        position: { x: (first.x + last.x) / 2, y: (first.y + last.y) / 2 },
+                        entity: object
+                    });
+                }
+                break;
+            }
+
+            case 'ELLIPSE': {
+                const ellipse = entity as DxfEllipse;
+                // Center
+                points.push({
+                    type: SnapType.CENTER,
+                    position: { x: ellipse.center.x, y: ellipse.center.y },
+                    entity: object
+                });
+                // Major axis endpoints
+                points.push({
+                    type: SnapType.QUADRANT,
+                    position: {
+                        x: ellipse.center.x + ellipse.majorAxisEndpoint.x,
+                        y: ellipse.center.y + ellipse.majorAxisEndpoint.y
+                    },
+                    entity: object
+                });
+                points.push({
+                    type: SnapType.QUADRANT,
+                    position: {
+                        x: ellipse.center.x - ellipse.majorAxisEndpoint.x,
+                        y: ellipse.center.y - ellipse.majorAxisEndpoint.y
+                    },
+                    entity: object
+                });
+                break;
+            }
+
+            case 'POINT': {
+                const point = entity as DxfPoint_;
+                points.push({
+                    type: SnapType.ENDPOINT,
+                    position: { x: point.position.x, y: point.position.y },
+                    entity: object
+                });
+                break;
+            }
+
+            case 'TEXT':
+            case 'MTEXT': {
+                const text = entity as DxfText;
+                points.push({
+                    type: SnapType.ENDPOINT,
+                    position: { x: text.position.x, y: text.position.y },
+                    entity: object
+                });
+                break;
+            }
+
+            case 'INSERT': {
+                const insert = entity as DxfInsert;
+                points.push({
+                    type: SnapType.ENDPOINT,
+                    position: { x: insert.position.x, y: insert.position.y },
+                    entity: object
+                });
+                break;
+            }
+        }
+
+        return points;
+    }
+
+    // Update snap marker at cursor position
+    updateSnapMarker(screenX: number, screenY: number): SnapPoint | null {
+        if (!this.snapEnabled) {
+            this.clearSnapMarker();
+            return null;
+        }
+
+        // Convert screen to world coordinates
+        const rect = this.container.getBoundingClientRect();
+        const x = screenX - rect.left;
+        const y = screenY - rect.top;
+
+        const aspect = this.container.clientWidth / this.container.clientHeight;
+        const worldX = this.viewCenter.x + (x / this.container.clientWidth - 0.5) * this.viewWidth;
+        const worldY = this.viewCenter.y + (0.5 - y / this.container.clientHeight) * this.viewWidth / aspect;
+
+        // Find nearby snap points
+        const snapPoints = this.findSnapPointsNear(worldX, worldY);
+
+        if (snapPoints.length > 0) {
+            const closestSnap = snapPoints[0];
+            this.showSnapMarker(closestSnap);
+            this.currentSnapPoint = closestSnap;
+            return closestSnap;
+        } else {
+            this.clearSnapMarker();
+            this.currentSnapPoint = null;
+            return null;
+        }
+    }
+
+    // Show snap marker at a snap point
+    private showSnapMarker(snapPoint: SnapPoint): void {
+        this.clearSnapMarker();
+
+        const markerSize = this.screenToWorldDistance(10);
+        const color = SNAP_COLORS[snapPoint.type];
+
+        this.snapMarker = new THREE.Group();
+        this.snapMarker.name = 'active-snap-marker';
+
+        switch (snapPoint.type) {
+            case SnapType.ENDPOINT:
+                // Square marker
+                this.createSquareMarker(snapPoint.position, markerSize, color);
+                break;
+            case SnapType.MIDPOINT:
+                // Triangle marker
+                this.createTriangleMarker(snapPoint.position, markerSize, color);
+                break;
+            case SnapType.CENTER:
+                // Circle marker
+                this.createCircleMarker(snapPoint.position, markerSize, color);
+                break;
+            case SnapType.QUADRANT:
+                // Diamond marker
+                this.createDiamondMarker(snapPoint.position, markerSize, color);
+                break;
+            case SnapType.INTERSECTION:
+                // X marker
+                this.createXMarker(snapPoint.position, markerSize, color);
+                break;
+            default:
+                // Cross marker
+                this.createCrossMarker(snapPoint.position, markerSize, color);
+                break;
+        }
+
+        this.snapGroup.add(this.snapMarker);
+        this.render();
+    }
+
+    private createSquareMarker(pos: { x: number; y: number }, size: number, color: number): void {
+        if (!this.snapMarker) return;
+
+        const halfSize = size / 2;
+        const points = [
+            new THREE.Vector3(pos.x - halfSize, pos.y - halfSize, 1),
+            new THREE.Vector3(pos.x + halfSize, pos.y - halfSize, 1),
+            new THREE.Vector3(pos.x + halfSize, pos.y + halfSize, 1),
+            new THREE.Vector3(pos.x - halfSize, pos.y + halfSize, 1),
+            new THREE.Vector3(pos.x - halfSize, pos.y - halfSize, 1)
+        ];
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+        this.snapMarker.add(new THREE.Line(geometry, material));
+    }
+
+    private createTriangleMarker(pos: { x: number; y: number }, size: number, color: number): void {
+        if (!this.snapMarker) return;
+
+        const halfSize = size / 2;
+        const height = size * Math.sqrt(3) / 2;
+        const points = [
+            new THREE.Vector3(pos.x, pos.y + height / 2, 1),
+            new THREE.Vector3(pos.x + halfSize, pos.y - height / 2, 1),
+            new THREE.Vector3(pos.x - halfSize, pos.y - height / 2, 1),
+            new THREE.Vector3(pos.x, pos.y + height / 2, 1)
+        ];
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+        this.snapMarker.add(new THREE.Line(geometry, material));
+    }
+
+    private createCircleMarker(pos: { x: number; y: number }, size: number, color: number): void {
+        if (!this.snapMarker) return;
+
+        const segments = 24;
+        const radius = size / 2;
+        const points: THREE.Vector3[] = [];
+        for (let i = 0; i <= segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            points.push(new THREE.Vector3(
+                pos.x + Math.cos(angle) * radius,
+                pos.y + Math.sin(angle) * radius,
+                1
+            ));
+        }
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+        this.snapMarker.add(new THREE.Line(geometry, material));
+    }
+
+    private createDiamondMarker(pos: { x: number; y: number }, size: number, color: number): void {
+        if (!this.snapMarker) return;
+
+        const halfSize = size / 2;
+        const points = [
+            new THREE.Vector3(pos.x, pos.y + halfSize, 1),
+            new THREE.Vector3(pos.x + halfSize, pos.y, 1),
+            new THREE.Vector3(pos.x, pos.y - halfSize, 1),
+            new THREE.Vector3(pos.x - halfSize, pos.y, 1),
+            new THREE.Vector3(pos.x, pos.y + halfSize, 1)
+        ];
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+        this.snapMarker.add(new THREE.Line(geometry, material));
+    }
+
+    private createXMarker(pos: { x: number; y: number }, size: number, color: number): void {
+        if (!this.snapMarker) return;
+
+        const halfSize = size / 2;
+        const material = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+
+        // First diagonal
+        const points1 = [
+            new THREE.Vector3(pos.x - halfSize, pos.y - halfSize, 1),
+            new THREE.Vector3(pos.x + halfSize, pos.y + halfSize, 1)
+        ];
+        const geometry1 = new THREE.BufferGeometry().setFromPoints(points1);
+        this.snapMarker.add(new THREE.Line(geometry1, material));
+
+        // Second diagonal
+        const points2 = [
+            new THREE.Vector3(pos.x + halfSize, pos.y - halfSize, 1),
+            new THREE.Vector3(pos.x - halfSize, pos.y + halfSize, 1)
+        ];
+        const geometry2 = new THREE.BufferGeometry().setFromPoints(points2);
+        this.snapMarker.add(new THREE.Line(geometry2, material));
+    }
+
+    private createCrossMarker(pos: { x: number; y: number }, size: number, color: number): void {
+        if (!this.snapMarker) return;
+
+        const halfSize = size / 2;
+        const material = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+
+        // Horizontal line
+        const points1 = [
+            new THREE.Vector3(pos.x - halfSize, pos.y, 1),
+            new THREE.Vector3(pos.x + halfSize, pos.y, 1)
+        ];
+        const geometry1 = new THREE.BufferGeometry().setFromPoints(points1);
+        this.snapMarker.add(new THREE.Line(geometry1, material));
+
+        // Vertical line
+        const points2 = [
+            new THREE.Vector3(pos.x, pos.y - halfSize, 1),
+            new THREE.Vector3(pos.x, pos.y + halfSize, 1)
+        ];
+        const geometry2 = new THREE.BufferGeometry().setFromPoints(points2);
+        this.snapMarker.add(new THREE.Line(geometry2, material));
+    }
+
+    clearSnapMarker(): void {
+        if (this.snapMarker) {
+            this.snapGroup.remove(this.snapMarker);
+            this.snapMarker.traverse((child) => {
+                if (child instanceof THREE.Line) {
+                    child.geometry.dispose();
+                }
+            });
+            this.snapMarker = null;
+            this.currentSnapPoint = null;
+            this.render();
+        }
+    }
+
+    // ========== Drawing Tools ==========
+
+    getDrawingMode(): DrawingMode {
+        return this.drawingMode;
+    }
+
+    isDrawing(): boolean {
+        return this.drawingMode !== DrawingMode.NONE;
+    }
+
+    setOnDrawingComplete(callback: ((entity: DxfEntity) => void) | null): void {
+        this.onDrawingComplete = callback;
+    }
+
+    startDrawingLine(): void {
+        this.cancelDrawing();
+        this.drawingMode = DrawingMode.LINE;
+        this.drawingPoints = [];
+        this.container.classList.add('drawing-mode');
+    }
+
+    startDrawingCircle(): void {
+        this.cancelDrawing();
+        this.drawingMode = DrawingMode.CIRCLE;
+        this.drawingPoints = [];
+        this.container.classList.add('drawing-mode');
+    }
+
+    cancelDrawing(): void {
+        this.drawingMode = DrawingMode.NONE;
+        this.drawingPoints = [];
+        this.clearRubberBand();
+        this.container.classList.remove('drawing-mode');
+    }
+
+    // Handle click during drawing mode
+    handleDrawingClick(screenX: number, screenY: number): DxfEntity | null {
+        if (this.drawingMode === DrawingMode.NONE) {
+            return null;
+        }
+
+        // Get world position (use snap point if available)
+        const worldPos = this.getWorldPositionWithSnap(screenX, screenY);
+
+        switch (this.drawingMode) {
+            case DrawingMode.LINE:
+                return this.handleLineDrawingClick(worldPos);
+            case DrawingMode.CIRCLE:
+                return this.handleCircleDrawingClick(worldPos);
+            default:
+                return null;
+        }
+    }
+
+    private getWorldPositionWithSnap(screenX: number, screenY: number): { x: number; y: number } {
+        // If snap is enabled and we have a snap point, use it
+        if (this.snapEnabled && this.currentSnapPoint) {
+            return { ...this.currentSnapPoint.position };
+        }
+
+        // Otherwise, calculate world position from screen
+        const rect = this.container.getBoundingClientRect();
+        const x = screenX - rect.left;
+        const y = screenY - rect.top;
+
+        const aspect = this.container.clientWidth / this.container.clientHeight;
+        const worldX = this.viewCenter.x + (x / this.container.clientWidth - 0.5) * this.viewWidth;
+        const worldY = this.viewCenter.y + (0.5 - y / this.container.clientHeight) * this.viewWidth / aspect;
+
+        return { x: worldX, y: worldY };
+    }
+
+    private handleLineDrawingClick(worldPos: { x: number; y: number }): DxfEntity | null {
+        if (this.drawingPoints.length === 0) {
+            // First point - start of line
+            this.drawingPoints.push(worldPos);
+            return null;
+        } else {
+            // Second point - end of line
+            const startPoint = this.drawingPoints[0];
+            const endPoint = worldPos;
+
+            // Create DXF LINE entity
+            const lineEntity: DxfLine = {
+                type: 'LINE',
+                layer: this.currentDrawingLayer,
+                handle: this.generateHandle(),
+                start: { x: startPoint.x, y: startPoint.y },
+                end: { x: endPoint.x, y: endPoint.y }
+            };
+
+            // Add to parsed DXF
+            if (this.parsedDxf) {
+                this.parsedDxf.entities.push(lineEntity);
+            }
+
+            // Render the new line
+            const lineObject = this.renderLine(lineEntity, this.currentDrawingColor, null);
+            lineObject.userData.entity = lineEntity;
+            lineObject.userData.layer = lineEntity.layer;
+            this.entityGroup.add(lineObject);
+
+            // Clear drawing state
+            this.cancelDrawing();
+            this.render();
+
+            // Notify callback
+            if (this.onDrawingComplete) {
+                this.onDrawingComplete(lineEntity);
+            }
+
+            return lineEntity;
+        }
+    }
+
+    private handleCircleDrawingClick(worldPos: { x: number; y: number }): DxfEntity | null {
+        if (this.drawingPoints.length === 0) {
+            // First point - center of circle
+            this.drawingPoints.push(worldPos);
+            return null;
+        } else {
+            // Second point - defines radius
+            const center = this.drawingPoints[0];
+            const radiusPoint = worldPos;
+            const radius = Math.sqrt(
+                Math.pow(radiusPoint.x - center.x, 2) +
+                Math.pow(radiusPoint.y - center.y, 2)
+            );
+
+            if (radius < 0.001) {
+                // Too small, ignore
+                return null;
+            }
+
+            // Create DXF CIRCLE entity
+            const circleEntity: DxfCircle = {
+                type: 'CIRCLE',
+                layer: this.currentDrawingLayer,
+                handle: this.generateHandle(),
+                center: { x: center.x, y: center.y },
+                radius: radius
+            };
+
+            // Add to parsed DXF
+            if (this.parsedDxf) {
+                this.parsedDxf.entities.push(circleEntity);
+            }
+
+            // Render the new circle
+            const circleObject = this.renderCircle(circleEntity, this.currentDrawingColor, null);
+            circleObject.userData.entity = circleEntity;
+            circleObject.userData.layer = circleEntity.layer;
+            this.entityGroup.add(circleObject);
+
+            // Clear drawing state
+            this.cancelDrawing();
+            this.render();
+
+            // Notify callback
+            if (this.onDrawingComplete) {
+                this.onDrawingComplete(circleEntity);
+            }
+
+            return circleEntity;
+        }
+    }
+
+    // Update rubber band preview during mouse move
+    updateRubberBand(screenX: number, screenY: number): void {
+        if (this.drawingMode === DrawingMode.NONE || this.drawingPoints.length === 0) {
+            return;
+        }
+
+        const worldPos = this.getWorldPositionWithSnap(screenX, screenY);
+
+        switch (this.drawingMode) {
+            case DrawingMode.LINE:
+                this.updateLineRubberBand(worldPos);
+                break;
+            case DrawingMode.CIRCLE:
+                this.updateCircleRubberBand(worldPos);
+                break;
+        }
+    }
+
+    private updateLineRubberBand(endPos: { x: number; y: number }): void {
+        this.clearRubberBand();
+
+        if (this.drawingPoints.length === 0) return;
+
+        const startPos = this.drawingPoints[0];
+        const points = [
+            new THREE.Vector3(startPos.x, startPos.y, 2),
+            new THREE.Vector3(endPos.x, endPos.y, 2)
+        ];
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineDashedMaterial({
+            color: 0x00ff00,
+            dashSize: this.screenToWorldDistance(5),
+            gapSize: this.screenToWorldDistance(5),
+            scale: 1
+        });
+
+        this.rubberBandLine = new THREE.Line(geometry, material);
+        this.rubberBandLine.computeLineDistances();
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
+    private updateCircleRubberBand(radiusPos: { x: number; y: number }): void {
+        this.clearRubberBand();
+
+        if (this.drawingPoints.length === 0) return;
+
+        const center = this.drawingPoints[0];
+        const radius = Math.sqrt(
+            Math.pow(radiusPos.x - center.x, 2) +
+            Math.pow(radiusPos.y - center.y, 2)
+        );
+
+        if (radius < 0.001) return;
+
+        const segments = 64;
+        const points: THREE.Vector3[] = [];
+        for (let i = 0; i <= segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            points.push(new THREE.Vector3(
+                center.x + Math.cos(angle) * radius,
+                center.y + Math.sin(angle) * radius,
+                2
+            ));
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineDashedMaterial({
+            color: 0x00ff00,
+            dashSize: this.screenToWorldDistance(5),
+            gapSize: this.screenToWorldDistance(5),
+            scale: 1
+        });
+
+        this.rubberBandCircle = new THREE.Line(geometry, material);
+        this.rubberBandCircle.computeLineDistances();
+        this.drawingGroup.add(this.rubberBandCircle);
+        this.render();
+    }
+
+    private clearRubberBand(): void {
+        if (this.rubberBandLine) {
+            this.drawingGroup.remove(this.rubberBandLine);
+            this.rubberBandLine.geometry.dispose();
+            (this.rubberBandLine.material as THREE.Material).dispose();
+            this.rubberBandLine = null;
+        }
+
+        if (this.rubberBandCircle) {
+            this.drawingGroup.remove(this.rubberBandCircle);
+            this.rubberBandCircle.geometry.dispose();
+            (this.rubberBandCircle.material as THREE.Material).dispose();
+            this.rubberBandCircle = null;
+        }
+    }
+
+    private generateHandle(): string {
+        // Generate a unique handle for new entities
+        const timestamp = Date.now().toString(16).toUpperCase();
+        const random = Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+        return `NEW_${timestamp}${random}`;
+    }
+
+    setDrawingLayer(layerName: string): void {
+        this.currentDrawingLayer = layerName;
+    }
+
+    setDrawingColor(color: number): void {
+        this.currentDrawingColor = color;
     }
 }

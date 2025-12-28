@@ -359,6 +359,7 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
 </head>
 <body>
     <div id="viewer-container"></div>
+    <div id="drawing-mode-indicator" class="drawing-mode-indicator"></div>
     <div id="layer-panel">
         <div class="layer-panel-header">
             <h4>Layers</h4>
@@ -370,12 +371,26 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         </div>
         <div id="layer-list"></div>
     </div>
+    <div id="properties-panel">
+        <div class="properties-panel-header">
+            <h4>Properties</h4>
+            <button id="btn-properties-close" title="Close">&times;</button>
+        </div>
+        <div id="properties-content">
+            <div class="no-selection">No entity selected</div>
+        </div>
+    </div>
     <div id="toolbar">
-        <button id="btn-zoom-fit" title="Fit View">Fit</button>
+        <button id="btn-zoom-fit" title="Fit View (F)">Fit</button>
         <button id="btn-zoom-in" title="Zoom In">+</button>
         <button id="btn-zoom-out" title="Zoom Out">-</button>
         <span class="separator">|</span>
         <button id="btn-layers" title="Toggle Layers Panel">Layers</button>
+        <button id="btn-properties" title="Toggle Properties Panel">Props</button>
+        <button id="btn-snap" class="active" title="Toggle Snap (S)">Snap</button>
+        <span class="separator">|</span>
+        <button id="btn-draw-line" title="Draw Line (L)">Line</button>
+        <button id="btn-draw-circle" title="Draw Circle (C)">Circle</button>
         <span class="separator">|</span>
         <button id="btn-capture" title="Capture View">Capture</button>
         <button id="btn-extract" title="Extract Entities">Extract</button>
