@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+coverage/
+.vscode-test/
+.env
+.env.*
+.venv/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
