@@ -2,8 +2,8 @@
   "mcpServers": {
     "stgen-dxf-viewer": {
       "command": "node",
-      "args": ["./out/mcp/server.js"],
-      "cwd": "${workspaceFolder}",
+      "args": ["../out/mcp/server.js"],
+      "cwd": "c:\\Coding_Works\\VsExtension_stgen",
       "env": {
         "STGEN_MCP_PORT": "52789"
       }

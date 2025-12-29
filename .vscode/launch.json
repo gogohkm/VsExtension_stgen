@@ -11,7 +11,7 @@
 			"request": "launch",
 			"args": [
 				"--extensionDevelopmentPath=${workspaceFolder}",
-				 "//Users/hi/2026Coding_Prj/VscodeExtensions/stgen/dxf_sample"  // 테스트할 폴더 경로
+				"${workspaceFolder}/dxf_sample"
 			],
 			"outFiles": [
 				"${workspaceFolder}/out/**/*.js"
