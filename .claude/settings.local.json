@@ -7,7 +7,9 @@
       "Bash(ls \"c:\\\\Coding_Works\\\\VsExtension_stgen\\\\out\\\\mcp\"\" 2>nul || echo \"MCP output directory not found \")",
       "Bash(dir:*)",
       "Bash(git push:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npm run watch:*)"
     ]
   }
 }

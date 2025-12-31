@@ -323,17 +323,32 @@ html, body {
     font-family: monospace;
 }
 
+/* AutoCAD-style crosshair cursor with pickbox */
+/* Cursor size: 128x128 (max supported), crosshair lines with pickbox in center, white color */
+#viewer-container {
+    /* Default AutoCAD crosshair cursor - white */
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cline x1='64' y1='0' x2='64' y2='59' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='64' y1='69' x2='64' y2='128' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='0' y1='64' x2='59' y2='64' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='69' y1='64' x2='128' y2='64' stroke='%23ffffff' stroke-width='1'/%3E%3Crect x='59' y='59' width='10' height='10' fill='none' stroke='%23ffffff' stroke-width='1'/%3E%3C/svg%3E") 64 64, crosshair;
+}
+
 /* Cursor styles */
 #viewer-container.selecting {
-    cursor: crosshair;
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cline x1='64' y1='0' x2='64' y2='59' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='64' y1='69' x2='64' y2='128' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='0' y1='64' x2='59' y2='64' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='69' y1='64' x2='128' y2='64' stroke='%23ffffff' stroke-width='1'/%3E%3Crect x='59' y='59' width='10' height='10' fill='none' stroke='%23ffffff' stroke-width='1'/%3E%3C/svg%3E") 64 64, crosshair;
 }
 
 #viewer-container.hovering {
-    cursor: pointer;
+    /* Yellow cursor when hovering over entity */
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cline x1='64' y1='0' x2='64' y2='59' stroke='%23ffff00' stroke-width='1'/%3E%3Cline x1='64' y1='69' x2='64' y2='128' stroke='%23ffff00' stroke-width='1'/%3E%3Cline x1='0' y1='64' x2='59' y2='64' stroke='%23ffff00' stroke-width='1'/%3E%3Cline x1='69' y1='64' x2='128' y2='64' stroke='%23ffff00' stroke-width='1'/%3E%3Crect x='59' y='59' width='10' height='10' fill='none' stroke='%23ffff00' stroke-width='1'/%3E%3C/svg%3E") 64 64, crosshair;
 }
 
 #viewer-container.drawing-mode {
-    cursor: crosshair;
+    /* Cyan cursor when in drawing mode */
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cline x1='64' y1='0' x2='64' y2='59' stroke='%2300ffff' stroke-width='1'/%3E%3Cline x1='64' y1='69' x2='64' y2='128' stroke='%2300ffff' stroke-width='1'/%3E%3Cline x1='0' y1='64' x2='59' y2='64' stroke='%2300ffff' stroke-width='1'/%3E%3Cline x1='69' y1='64' x2='128' y2='64' stroke='%2300ffff' stroke-width='1'/%3E%3Crect x='59' y='59' width='10' height='10' fill='none' stroke='%2300ffff' stroke-width='1'/%3E%3C/svg%3E") 64 64, crosshair;
+}
+
+/* Pan cursor (when dragging) */
+#viewer-container.panning {
+    /* White cursor when panning */
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cline x1='64' y1='0' x2='64' y2='59' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='64' y1='69' x2='64' y2='128' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='0' y1='64' x2='59' y2='64' stroke='%23ffffff' stroke-width='1'/%3E%3Cline x1='69' y1='64' x2='128' y2='64' stroke='%23ffffff' stroke-width='1'/%3E%3Crect x='59' y='59' width='10' height='10' fill='none' stroke='%23ffffff' stroke-width='1'/%3E%3C/svg%3E") 64 64, move;
 }
 
 /* Drawing mode indicator */

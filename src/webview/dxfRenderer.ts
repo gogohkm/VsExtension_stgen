@@ -341,11 +341,13 @@ export class DxfRenderer {
                 } else {
                     this.isDragging = true;
                     this.lastMousePos = { x: e.clientX, y: e.clientY };
+                    this.container.classList.add('panning');
                 }
             } else if (e.button === 1) {
                 // Middle button = pan
                 this.isDragging = true;
                 this.lastMousePos = { x: e.clientX, y: e.clientY };
+                this.container.classList.add('panning');
             }
         });
 
@@ -392,10 +394,12 @@ export class DxfRenderer {
                 this.handleClick(e);
             }
             this.isDragging = false;
+            this.container.classList.remove('panning');
         });
 
         canvas.addEventListener('mouseleave', () => {
             this.isDragging = false;
+            this.container.classList.remove('panning');
             if (this.isBoxZooming) {
                 this.isBoxZooming = false;
                 this.container.classList.remove('selecting');
