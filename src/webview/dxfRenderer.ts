@@ -331,23 +331,21 @@ export class DxfRenderer {
 
         canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) {
-                // Shift+drag = box zoom
+                // Left button: Shift+drag = box zoom, otherwise no pan (selection only)
                 if (e.shiftKey) {
                     this.isBoxZooming = true;
                     this.boxZoomStart = { x: e.clientX, y: e.clientY };
                     this.boxZoomEnd = { x: e.clientX, y: e.clientY };
                     this.container.classList.add('selecting');
                     this.updateSelectionBox();
-                } else {
-                    this.isDragging = true;
-                    this.lastMousePos = { x: e.clientX, y: e.clientY };
-                    this.container.classList.add('panning');
                 }
+                // Left button without shift: no pan, just allow click selection
             } else if (e.button === 1) {
-                // Middle button = pan
+                // Middle button (wheel) = pan
                 this.isDragging = true;
                 this.lastMousePos = { x: e.clientX, y: e.clientY };
                 this.container.classList.add('panning');
+                e.preventDefault(); // Prevent default middle-click behavior
             }
         });
 
@@ -1682,6 +1680,10 @@ export class DxfRenderer {
         return this.scene;
     }
 
+    getCamera(): THREE.OrthographicCamera {
+        return this.camera;
+    }
+
     getAnnotationGroup(): THREE.Group {
         return this.annotationGroup;
     }
@@ -2533,6 +2535,10 @@ export class DxfRenderer {
         return this.drawingMode !== DrawingMode.NONE;
     }
 
+    getDrawingPointCount(): number {
+        return this.drawingPoints.length;
+    }
+
     setOnDrawingComplete(callback: ((entity: DxfEntity) => void) | null): void {
         this.onDrawingComplete = callback;
     }
@@ -2625,8 +2631,10 @@ export class DxfRenderer {
             lineObject.userData.layer = lineEntity.layer;
             this.entityGroup.add(lineObject);
 
-            // Clear drawing state
-            this.cancelDrawing();
+            // AutoCAD-style: Continue from last endpoint (don't cancel drawing)
+            // Set the endpoint as the new start point for continuous line drawing
+            this.drawingPoints = [{ x: endPoint.x, y: endPoint.y }];
+            this.clearRubberBand();
             this.render();
 
             // Notify callback
@@ -2677,8 +2685,10 @@ export class DxfRenderer {
             circleObject.userData.layer = circleEntity.layer;
             this.entityGroup.add(circleObject);
 
-            // Clear drawing state
-            this.cancelDrawing();
+            // AutoCAD-style: Ready to draw another circle (don't cancel drawing)
+            // Reset points to wait for new center point
+            this.drawingPoints = [];
+            this.clearRubberBand();
             this.render();
 
             // Notify callback
@@ -2800,5 +2810,31 @@ export class DxfRenderer {
 
     setDrawingColor(color: number): void {
         this.currentDrawingColor = color;
+    }
+
+    // Toggle snap and return new state
+    toggleSnap(): boolean {
+        this.snapEnabled = !this.snapEnabled;
+        if (!this.snapEnabled) {
+            this.clearSnapMarker();
+        }
+        // Update snap button UI
+        const snapBtn = document.getElementById('btn-snap');
+        if (snapBtn) {
+            snapBtn.classList.toggle('active', this.snapEnabled);
+        }
+        return this.snapEnabled;
+    }
+
+    // Undo last action (placeholder - needs undo stack implementation)
+    undo(): void {
+        // TODO: Implement undo stack
+        console.log('Undo not yet implemented');
+    }
+
+    // Redo last undone action (placeholder - needs redo stack implementation)
+    redo(): void {
+        // TODO: Implement redo stack
+        console.log('Redo not yet implemented');
     }
 }

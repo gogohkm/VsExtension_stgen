@@ -411,26 +411,42 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         </div>
     </div>
     <div id="toolbar">
-        <button id="btn-zoom-fit" title="Fit View (F)">Fit</button>
-        <button id="btn-zoom-in" title="Zoom In">+</button>
-        <button id="btn-zoom-out" title="Zoom Out">-</button>
-        <span class="separator">|</span>
-        <button id="btn-layers" title="Toggle Layers Panel">Layers</button>
-        <button id="btn-properties" title="Toggle Properties Panel">Props</button>
-        <button id="btn-snap" class="active" title="Toggle Snap (S)">Snap</button>
-        <span class="separator">|</span>
-        <button id="btn-draw-line" title="Draw Line (L)">Line</button>
-        <button id="btn-draw-circle" title="Draw Circle (C)">Circle</button>
-        <span class="separator">|</span>
-        <button id="btn-capture" title="Capture View">Capture</button>
-        <button id="btn-extract" title="Extract Entities">Extract</button>
-        <span class="separator">|</span>
-        <button id="btn-annotate-text" title="Add Text Annotation">T</button>
-        <button id="btn-annotate-arrow" title="Add Arrow">→</button>
-        <button id="btn-annotate-rect" title="Add Rectangle">□</button>
-        <button id="btn-clear-annotations" title="Clear Annotations">Clear</button>
-        <button id="btn-save-annotations" title="Save Annotations">Save</button>
-        <button id="btn-load-annotations" title="Load Annotations">Load</button>
+        <div class="button-row">
+            <button id="btn-zoom-fit" title="Fit View (F)">Fit</button>
+            <button id="btn-zoom-in" title="Zoom In">+</button>
+            <button id="btn-zoom-out" title="Zoom Out">-</button>
+        </div>
+        <span class="separator"></span>
+        <div class="button-row">
+            <button id="btn-layers" title="Toggle Layers Panel">Layers</button>
+            <button id="btn-properties" title="Toggle Properties Panel">Props</button>
+        </div>
+        <div class="button-row">
+            <button id="btn-snap" class="active" title="Toggle Snap (S)">Snap</button>
+        </div>
+        <span class="separator"></span>
+        <div class="button-row">
+            <button id="btn-draw-line" title="Draw Line (L)">Line</button>
+            <button id="btn-draw-circle" title="Draw Circle (C)">Circle</button>
+        </div>
+        <span class="separator"></span>
+        <div class="button-row">
+            <button id="btn-capture" title="Capture View">Capture</button>
+            <button id="btn-extract" title="Extract Entities">Extract</button>
+        </div>
+        <span class="separator"></span>
+        <div class="button-row">
+            <button id="btn-clear-annotations" title="Clear Annotations">Clear</button>
+            <button id="btn-save-annotations" title="Save Annotations">Save</button>
+            <button id="btn-load-annotations" title="Load Annotations">Load</button>
+        </div>
+    </div>
+    <div id="command-panel">
+        <div id="command-history"></div>
+        <div id="command-input-line">
+            <span id="command-prompt">Command:</span>
+            <input type="text" id="command-input" autocomplete="off" spellcheck="false" placeholder="Enter command or coordinates...">
+        </div>
     </div>
     <div id="status-bar">
         <span id="status-text">Ready</span>

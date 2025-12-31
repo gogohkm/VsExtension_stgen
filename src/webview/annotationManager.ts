@@ -21,6 +21,7 @@ export class AnnotationManager {
     private annotations: Map<string, THREE.Object3D> = new Map();
     private annotationData: Map<string, Annotation> = new Map();
     private renderCallback: () => void;
+    private getCamera: () => THREE.OrthographicCamera;
 
     private isAnnotating = false;
     private currentType: AnnotationType = 'text';
@@ -29,11 +30,13 @@ export class AnnotationManager {
     constructor(
         scene: THREE.Scene,
         annotationGroup: THREE.Group,
-        renderCallback: () => void
+        renderCallback: () => void,
+        getCamera?: () => THREE.OrthographicCamera
     ) {
         this.scene = scene;
         this.annotationGroup = annotationGroup;
         this.renderCallback = renderCallback;
+        this.getCamera = getCamera || (() => this.scene.children.find(c => c instanceof THREE.Camera) as THREE.OrthographicCamera);
     }
 
     startAnnotation(type: AnnotationType): void {
@@ -73,10 +76,10 @@ export class AnnotationManager {
         const ndcX = (x / rect.width) * 2 - 1;
         const ndcY = -(y / rect.height) * 2 + 1;
 
-        // For orthographic camera, we can directly use NDC to get world coords
-        // This is a simplified approach - in production, use raycasting
-        const camera = this.scene.children.find(c => c instanceof THREE.Camera) as THREE.OrthographicCamera;
+        // Get camera from the provided getter function
+        const camera = this.getCamera();
         if (!camera) {
+            console.error('AnnotationManager: Camera not found');
             return;
         }
 

@@ -6,6 +6,7 @@ import './styles.css';
 import { DxfParser, ParsedDxf, DxfEntity, DxfLine, DxfCircle, DxfArc, DxfPolyline, DxfText, DxfPoint_, DxfEllipse, DxfSpline, DxfHatch, DxfDimension } from './dxfParser';
 import { DxfRenderer, SnapType, SnapPoint, DrawingMode } from './dxfRenderer';
 import { AnnotationManager, AnnotationType } from './annotationManager';
+import { CommandLine } from './commandLine';
 
 declare function acquireVsCodeApi(): {
     postMessage: (message: any) => void;
@@ -17,6 +18,7 @@ class DxfViewerApp {
     private vscode = acquireVsCodeApi();
     private renderer: DxfRenderer | null = null;
     private annotationManager: AnnotationManager | null = null;
+    private commandLine: CommandLine | null = null;
     private parsedDxf: ParsedDxf | null = null;
     private fileName: string = '';
 
@@ -45,8 +47,16 @@ class DxfViewerApp {
         this.annotationManager = new AnnotationManager(
             this.renderer.getScene(),
             this.renderer.getAnnotationGroup(),
-            () => this.renderer?.render()
+            () => this.renderer?.render(),
+            () => this.renderer!.getCamera()
         );
+
+        // Initialize command line
+        this.commandLine = new CommandLine();
+        this.commandLine.setRenderer(this.renderer);
+
+        // Register additional commands
+        this.registerCommands();
 
         // Setup UI event listeners
         this.setupToolbarEvents();
@@ -71,21 +81,15 @@ class DxfViewerApp {
 
     private setupKeyboardEvents(): void {
         window.addEventListener('keydown', (e) => {
-            // Delete selected entities
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (this.renderer) {
-                    const count = this.renderer.deleteSelectedEntities();
-                    if (count > 0) {
-                        this.setStatus(`Deleted ${count} ${count === 1 ? 'entity' : 'entities'}`);
-                        e.preventDefault();
-                    }
-                }
-            }
+            // Check if command input is focused - if so, don't intercept most keys
+            const commandInput = document.getElementById('command-input');
+            const isCommandInputFocused = document.activeElement === commandInput;
 
-            // Escape - cancel/deselect
+            // Always handle Escape to cancel operations
             if (e.key === 'Escape') {
                 if (this.renderer?.isDrawing()) {
                     this.cancelDrawing();
+                    this.commandLine?.completeCommand();
                 } else if (this.annotationManager?.isAnnotationMode()) {
                     this.annotationManager.cancelAnnotation();
                     this.setAnnotationModeIndicator(false);
@@ -93,12 +97,31 @@ class DxfViewerApp {
                     this.renderer.clearSelection();
                 }
                 e.preventDefault();
+                return;
+            }
+
+            // If command input is focused, let it handle most keys
+            if (isCommandInputFocused) {
+                return;
+            }
+
+            // Delete selected entities
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (this.renderer) {
+                    const count = this.renderer.deleteSelectedEntities();
+                    if (count > 0) {
+                        this.setStatus(`Deleted ${count} ${count === 1 ? 'entity' : 'entities'}`);
+                        this.commandLine?.print(`Deleted ${count} ${count === 1 ? 'entity' : 'entities'}`, 'success');
+                        e.preventDefault();
+                    }
+                }
             }
 
             // Fit view
             if (e.key === 'f' || e.key === 'F') {
                 if (!e.ctrlKey && !e.metaKey) {
                     this.renderer?.fitView();
+                    this.commandLine?.print('View fitted to extents', 'success');
                     e.preventDefault();
                 }
             }
@@ -129,6 +152,98 @@ class DxfViewerApp {
                 if (!e.ctrlKey && !e.metaKey) {
                     this.startDrawingCircle();
                     e.preventDefault();
+                }
+            }
+
+            // Focus command line with any letter key
+            if (/^[a-zA-Z]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                // Focus command input and pass the key
+                commandInput?.focus();
+            }
+        });
+    }
+
+    private registerCommands(): void {
+        if (!this.commandLine) return;
+
+        // CAPTURE command
+        this.commandLine.registerCommand({
+            name: 'CAPTURE',
+            aliases: ['CAP', 'SCREENSHOT'],
+            description: 'Capture current view as image',
+            execute: () => {
+                this.captureView();
+                this.commandLine?.print('View captured', 'success');
+            }
+        });
+
+        // EXTRACT command
+        this.commandLine.registerCommand({
+            name: 'EXTRACT',
+            aliases: ['EXT'],
+            description: 'Extract entity data',
+            execute: () => {
+                this.extractEntities();
+                this.commandLine?.print('Entities extracted', 'success');
+            }
+        });
+
+        // ANNOTATE commands
+        this.commandLine.registerCommand({
+            name: 'TEXT',
+            aliases: ['T', 'DTEXT'],
+            description: 'Add text annotation',
+            execute: () => {
+                this.startAnnotation('text');
+                this.commandLine?.print('Click to place text annotation', 'prompt');
+            }
+        });
+
+        this.commandLine.registerCommand({
+            name: 'ARROW',
+            aliases: ['LEADER', 'LE'],
+            description: 'Add arrow annotation',
+            execute: () => {
+                this.startAnnotation('arrow');
+                this.commandLine?.print('Click start point for arrow', 'prompt');
+            }
+        });
+
+        this.commandLine.registerCommand({
+            name: 'RECTANGLE',
+            aliases: ['REC', 'RECT'],
+            description: 'Add rectangle annotation',
+            execute: () => {
+                this.startAnnotation('rectangle');
+                this.commandLine?.print('Click first corner of rectangle', 'prompt');
+            }
+        });
+
+        // CLEARANNO command
+        this.commandLine.registerCommand({
+            name: 'CLEARANNO',
+            aliases: ['CA'],
+            description: 'Clear all annotations',
+            execute: () => {
+                this.annotationManager?.clearAll();
+                this.renderer?.render();
+                this.commandLine?.print('All annotations cleared', 'success');
+            }
+        });
+
+        // DELETE command
+        this.commandLine.registerCommand({
+            name: 'DELETE',
+            aliases: ['DEL', 'ERASE', 'E'],
+            description: 'Delete selected entities',
+            execute: () => {
+                if (this.renderer) {
+                    const count = this.renderer.deleteSelectedEntities();
+                    if (count > 0) {
+                        this.commandLine?.print(`Deleted ${count} ${count === 1 ? 'entity' : 'entities'}`, 'success');
+                    } else {
+                        this.commandLine?.print('No entities selected', 'error');
+                    }
                 }
             }
         });
@@ -167,11 +282,21 @@ class DxfViewerApp {
 
             // If in drawing mode, handle drawing click
             if (this.renderer.isDrawing()) {
+                const mode = this.renderer.getDrawingMode();
                 const entity = this.renderer.handleDrawingClick(e.clientX, e.clientY);
+
                 if (entity) {
                     this.setStatus(`Created ${entity.type} on layer "${entity.layer}"`);
-                    this.updateDrawingModeIndicator();
+                    this.commandLine?.print(`Created ${entity.type} on layer "${entity.layer}"`, 'success');
+
+                    // Update prompt for continuous drawing (AutoCAD style)
+                    this.updateDrawingPrompt(mode);
+                } else {
+                    // First point was set, show next point prompt
+                    this.updateDrawingPrompt(mode, true);
                 }
+
+                this.updateDrawingModeIndicator();
                 e.stopPropagation();
             }
         });
@@ -270,6 +395,35 @@ class DxfViewerApp {
             } else {
                 indicator.classList.remove('visible');
             }
+        }
+    }
+
+    private updateDrawingPrompt(mode: DrawingMode, firstPointSet: boolean = false): void {
+        if (!this.commandLine) return;
+
+        switch (mode) {
+            case DrawingMode.LINE:
+                if (firstPointSet) {
+                    // After first point is set, prompt for next point
+                    this.commandLine.print('Specify next point:', 'prompt');
+                    this.commandLine.setPrompt('Next point:');
+                } else {
+                    // After line is created, prompt for next point (continuous)
+                    this.commandLine.print('Specify next point or [Esc] to finish:', 'prompt');
+                    this.commandLine.setPrompt('Next point:');
+                }
+                break;
+            case DrawingMode.CIRCLE:
+                if (firstPointSet) {
+                    // After center is set, prompt for radius
+                    this.commandLine.print('Specify radius:', 'prompt');
+                    this.commandLine.setPrompt('Radius:');
+                } else {
+                    // After circle is created, prompt for new center (continuous)
+                    this.commandLine.print('Specify center point:', 'prompt');
+                    this.commandLine.setPrompt('Center:');
+                }
+                break;
         }
     }
 
