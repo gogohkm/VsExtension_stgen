@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(code:*)",
+      "Bash(findstr:*)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Coding_Works\" -Name)",
+      "Bash(Select-String -Pattern \"stanal\" -CaseSensitive:$false)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Coding_Works\\\\VsExtension_stgen\" -Filter \"*.ts\" -Recurse)",
+      "Bash(Where-Object { $_FullName -notmatch \"node_modules\" })",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(node:*)"
+    ]
+  }
+}

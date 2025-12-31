@@ -1,0 +1,45 @@
+{
+  "model": {
+    "name": "New Model",
+    "units": {
+      "length": "mm",
+      "force": "kN"
+    }
+  },
+  "materials": [
+    {
+      "id": "Steel",
+      "E": 210000,
+      "G": 81000,
+      "nu": 0.3,
+      "rho": 7.85e-9
+    }
+  ],
+  "sections": [
+    {
+      "id": "Default",
+      "A": 1000,
+      "Iy": 1000000,
+      "Iz": 1000000,
+      "J": 100000
+    }
+  ],
+  "nodes": [],
+  "members": [],
+  "supports": [],
+  "loadCases": [
+    {
+      "name": "Dead",
+      "nodeLoads": [],
+      "memberLoads": []
+    }
+  ],
+  "loadCombinations": [
+    {
+      "name": "1.0D",
+      "factors": {
+        "Dead": 1
+      }
+    }
+  ]
+}

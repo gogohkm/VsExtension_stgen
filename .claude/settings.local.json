@@ -5,7 +5,9 @@
       "Bash(npm run compile:*)",
       "Bash(npm run build:webview:*)",
       "Bash(ls \"c:\\\\Coding_Works\\\\VsExtension_stgen\\\\out\\\\mcp\"\" 2>nul || echo \"MCP output directory not found \")",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)"
     ]
   }
 }

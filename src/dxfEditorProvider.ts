@@ -120,9 +120,12 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const asciiPreview = new TextDecoder('ascii', { fatal: false }).decode(data.slice(0, 5000));
 
         // Check for $DWGCODEPAGE setting
-        const codepageMatch = asciiPreview.match(/\$DWGCODEPAGE[\s\S]*?\n\s*3\s*\n([^\n]+)/i);
+        // DXF format: $DWGCODEPAGE on one line, then "  3" (group code), then the codepage value
+        // Note: Use DWGCODEPAGE without $ to avoid regex escaping issues
+        const codepageMatch = asciiPreview.match(/DWGCODEPAGE\n\s*3\n([^\n\r]+)/i);
         if (codepageMatch) {
             const codepage = codepageMatch[1].trim().toUpperCase();
+            console.log(`[DXF Viewer] Detected codepage: ${codepage}`);
 
             // Map AutoCAD codepages to JavaScript TextDecoder encodings
             const encodingMap: Record<string, string> = {
@@ -138,12 +141,18 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
             const encoding = encodingMap[codepage];
             if (encoding) {
+                console.log(`[DXF Viewer] Using encoding: ${encoding}`);
                 try {
                     return new TextDecoder(encoding).decode(data);
                 } catch (e) {
+                    console.error(`[DXF Viewer] Failed to decode with ${encoding}:`, e);
                     // Fall through to auto-detection
                 }
+            } else {
+                console.log(`[DXF Viewer] Unknown codepage: ${codepage}, falling back to auto-detection`);
             }
+        } else {
+            console.log('[DXF Viewer] No $DWGCODEPAGE found, using auto-detection');
         }
 
         // Try UTF-8 first
