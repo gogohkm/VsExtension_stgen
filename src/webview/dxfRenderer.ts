@@ -2590,6 +2590,13 @@ export class DxfRenderer {
         }
 
         // Otherwise, calculate world position from screen
+        return this.screenToWorld(screenX, screenY);
+    }
+
+    /**
+     * Converts screen coordinates to world coordinates
+     */
+    screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
         const rect = this.container.getBoundingClientRect();
         const x = screenX - rect.left;
         const y = screenY - rect.top;

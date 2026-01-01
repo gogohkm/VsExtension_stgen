@@ -6,7 +6,9 @@ import './styles.css';
 import { DxfParser, ParsedDxf, DxfEntity, DxfLine, DxfCircle, DxfArc, DxfPolyline, DxfText, DxfPoint_, DxfEllipse, DxfSpline, DxfHatch, DxfDimension } from './dxfParser';
 import { DxfRenderer, SnapType, SnapPoint, DrawingMode } from './dxfRenderer';
 import { AnnotationManager, AnnotationType } from './annotationManager';
-import { CommandLine } from './commandLine';
+import { AcEdCommandLineUI } from './editor/ui/AcEdCommandLineUI';
+import { AcEdCommandStack } from './editor/command/AcEdCommandStack';
+import { registerCadCommands } from './editor/AcEdCommandRegistry';
 
 declare function acquireVsCodeApi(): {
     postMessage: (message: any) => void;
@@ -18,7 +20,7 @@ class DxfViewerApp {
     private vscode = acquireVsCodeApi();
     private renderer: DxfRenderer | null = null;
     private annotationManager: AnnotationManager | null = null;
-    private commandLine: CommandLine | null = null;
+    private commandLine: AcEdCommandLineUI | null = null;
     private parsedDxf: ParsedDxf | null = null;
     private fileName: string = '';
 
@@ -51,12 +53,15 @@ class DxfViewerApp {
             () => this.renderer!.getCamera()
         );
 
-        // Initialize command line
-        this.commandLine = new CommandLine();
+        // Register CAD commands to the command stack
+        registerCadCommands();
+
+        // Initialize command line UI
+        this.commandLine = new AcEdCommandLineUI();
         this.commandLine.setRenderer(this.renderer);
 
-        // Register additional commands
-        this.registerCommands();
+        // Register utility commands (non-CAD commands)
+        this.registerUtilityCommands();
 
         // Setup UI event listeners
         this.setupToolbarEvents();
@@ -163,11 +168,42 @@ class DxfViewerApp {
         });
     }
 
-    private registerCommands(): void {
+    private registerUtilityCommands(): void {
         if (!this.commandLine) return;
 
+        // HELP command
+        this.commandLine.registerSimpleCommand({
+            name: 'HELP',
+            aliases: ['?', 'H'],
+            description: 'Show available commands',
+            execute: () => {
+                this.commandLine?.print('Available commands:', 'response');
+
+                // Get CAD commands from command stack
+                const stack = AcEdCommandStack.instance;
+                const cadCommands = stack.getAllCommands();
+
+                for (const item of cadCommands) {
+                    const cmd = item.command;
+                    const alias = cmd.localName !== cmd.globalName ? ` (${cmd.localName})` : '';
+                    this.commandLine?.print(`  ${cmd.globalName}${alias} - ${cmd.description}`, 'response');
+                }
+
+                this.commandLine?.print('', 'response');
+                this.commandLine?.print('Utility commands:', 'response');
+                this.commandLine?.print('  HELP (?, H) - Show this help', 'response');
+                this.commandLine?.print('  CAPTURE (CAP) - Capture current view', 'response');
+                this.commandLine?.print('  EXTRACT (EXT) - Extract entity data', 'response');
+                this.commandLine?.print('  ZOOM (Z) - Zoom view (E=Extents)', 'response');
+                this.commandLine?.print('  FIT (F) - Fit view to extents', 'response');
+                this.commandLine?.print('  DELETE (DEL, ERASE) - Delete selected', 'response');
+                this.commandLine?.print('  UNDO (U) - Undo last action', 'response');
+                this.commandLine?.print('  REDO - Redo last action', 'response');
+            }
+        });
+
         // CAPTURE command
-        this.commandLine.registerCommand({
+        this.commandLine.registerSimpleCommand({
             name: 'CAPTURE',
             aliases: ['CAP', 'SCREENSHOT'],
             description: 'Capture current view as image',
@@ -178,7 +214,7 @@ class DxfViewerApp {
         });
 
         // EXTRACT command
-        this.commandLine.registerCommand({
+        this.commandLine.registerSimpleCommand({
             name: 'EXTRACT',
             aliases: ['EXT'],
             description: 'Extract entity data',
@@ -189,7 +225,7 @@ class DxfViewerApp {
         });
 
         // ANNOTATE commands
-        this.commandLine.registerCommand({
+        this.commandLine.registerSimpleCommand({
             name: 'TEXT',
             aliases: ['T', 'DTEXT'],
             description: 'Add text annotation',
@@ -199,7 +235,7 @@ class DxfViewerApp {
             }
         });
 
-        this.commandLine.registerCommand({
+        this.commandLine.registerSimpleCommand({
             name: 'ARROW',
             aliases: ['LEADER', 'LE'],
             description: 'Add arrow annotation',
@@ -209,7 +245,7 @@ class DxfViewerApp {
             }
         });
 
-        this.commandLine.registerCommand({
+        this.commandLine.registerSimpleCommand({
             name: 'RECTANGLE',
             aliases: ['REC', 'RECT'],
             description: 'Add rectangle annotation',
@@ -220,7 +256,7 @@ class DxfViewerApp {
         });
 
         // CLEARANNO command
-        this.commandLine.registerCommand({
+        this.commandLine.registerSimpleCommand({
             name: 'CLEARANNO',
             aliases: ['CA'],
             description: 'Clear all annotations',
@@ -232,7 +268,7 @@ class DxfViewerApp {
         });
 
         // DELETE command
-        this.commandLine.registerCommand({
+        this.commandLine.registerSimpleCommand({
             name: 'DELETE',
             aliases: ['DEL', 'ERASE', 'E'],
             description: 'Delete selected entities',
@@ -245,6 +281,117 @@ class DxfViewerApp {
                         this.commandLine?.print('No entities selected', 'error');
                     }
                 }
+            }
+        });
+
+        // ZOOM commands
+        this.commandLine.registerSimpleCommand({
+            name: 'ZOOM',
+            aliases: ['Z'],
+            description: 'Zoom view',
+            execute: () => {
+                this.renderer?.fitView();
+                this.commandLine?.print('Zoom extents', 'success');
+            }
+        });
+
+        // FIT command
+        this.commandLine.registerSimpleCommand({
+            name: 'FIT',
+            aliases: ['F', 'ZE'],
+            description: 'Fit view to extents',
+            execute: () => {
+                this.renderer?.fitView();
+                this.commandLine?.print('View fitted to extents', 'success');
+            }
+        });
+
+        // REGEN command
+        this.commandLine.registerSimpleCommand({
+            name: 'REGEN',
+            aliases: ['RE'],
+            description: 'Regenerate drawing',
+            execute: () => {
+                this.renderer?.render();
+                this.commandLine?.print('Drawing regenerated', 'success');
+            }
+        });
+
+        // SNAP command
+        this.commandLine.registerSimpleCommand({
+            name: 'SNAP',
+            aliases: ['SN'],
+            description: 'Toggle snap mode',
+            execute: () => {
+                if (this.renderer) {
+                    const enabled = this.renderer.toggleSnap();
+                    this.commandLine?.print(`Snap ${enabled ? 'ON' : 'OFF'}`, 'success');
+                }
+            }
+        });
+
+        // UNDO command
+        this.commandLine.registerSimpleCommand({
+            name: 'UNDO',
+            aliases: ['U'],
+            description: 'Undo last action',
+            execute: () => {
+                if (this.renderer) {
+                    this.renderer.undo();
+                    this.commandLine?.print('Undo', 'success');
+                }
+            }
+        });
+
+        // REDO command
+        this.commandLine.registerSimpleCommand({
+            name: 'REDO',
+            aliases: [],
+            description: 'Redo last action',
+            execute: () => {
+                if (this.renderer) {
+                    this.renderer.redo();
+                    this.commandLine?.print('Redo', 'success');
+                }
+            }
+        });
+
+        // LAYER command
+        this.commandLine.registerSimpleCommand({
+            name: 'LAYER',
+            aliases: ['LA'],
+            description: 'Open layer panel',
+            execute: () => {
+                const layerPanel = document.getElementById('layer-panel');
+                if (layerPanel) {
+                    layerPanel.classList.toggle('visible');
+                    this.commandLine?.print('Layer panel toggled', 'success');
+                }
+            }
+        });
+
+        // PROPERTIES command
+        this.commandLine.registerSimpleCommand({
+            name: 'PROPERTIES',
+            aliases: ['PR', 'PROPS'],
+            description: 'Open properties panel',
+            execute: () => {
+                const propsPanel = document.getElementById('properties-panel');
+                if (propsPanel) {
+                    propsPanel.classList.toggle('visible');
+                    this.commandLine?.print('Properties panel toggled', 'success');
+                }
+            }
+        });
+
+        // CLEAR command
+        this.commandLine.registerSimpleCommand({
+            name: 'CLEAR',
+            aliases: ['CLS'],
+            description: 'Clear command history',
+            execute: () => {
+                this.commandLine?.clearHistory();
+                this.commandLine?.print('Command history cleared', 'success');
             }
         });
     }
@@ -268,6 +415,12 @@ class DxfViewerApp {
             if (this.renderer.isDrawing()) {
                 this.renderer.updateRubberBand(e.clientX, e.clientY);
             }
+
+            // Pass mouse move to command line for jig updates
+            const worldPoint = this.renderer.screenToWorld(e.clientX, e.clientY);
+            if (worldPoint) {
+                this.commandLine?.handleMouseMove(worldPoint.x, worldPoint.y);
+            }
         });
 
         container.addEventListener('mouseleave', () => {
@@ -276,18 +429,25 @@ class DxfViewerApp {
             }
         });
 
-        // Handle clicks for drawing mode
+        // Handle clicks for drawing mode and command input
         container.addEventListener('click', (e) => {
             if (!this.renderer) return;
 
-            // If in drawing mode, handle drawing click
+            // Get world coordinates
+            const worldPoint = this.renderer.screenToWorld(e.clientX, e.clientY);
+
+            // Pass click to command line for AcEditor handling
+            if (worldPoint) {
+                this.commandLine?.handleMouseClick(worldPoint.x, worldPoint.y);
+            }
+
+            // Legacy drawing mode handling (for non-command drawing)
             if (this.renderer.isDrawing()) {
                 const mode = this.renderer.getDrawingMode();
                 const entity = this.renderer.handleDrawingClick(e.clientX, e.clientY);
 
                 if (entity) {
                     this.setStatus(`Created ${entity.type} on layer "${entity.layer}"`);
-                    this.commandLine?.print(`Created ${entity.type} on layer "${entity.layer}"`, 'success');
 
                     // Update prompt for continuous drawing (AutoCAD style)
                     this.updateDrawingPrompt(mode);
