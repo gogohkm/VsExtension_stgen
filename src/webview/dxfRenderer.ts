@@ -2812,6 +2812,85 @@ export class DxfRenderer {
         this.currentDrawingColor = color;
     }
 
+    // Add a drawing point (for command line coordinate input)
+    addDrawingPoint(x: number, y: number): void {
+        this.drawingPoints.push({ x, y });
+    }
+
+    // Create a line from two points (for command line input)
+    createLineFromPoints(start: { x: number; y: number }, end: { x: number; y: number }): DxfLine | null {
+        // Create DXF LINE entity
+        const lineEntity: DxfLine = {
+            type: 'LINE',
+            layer: this.currentDrawingLayer,
+            handle: this.generateHandle(),
+            start: { x: start.x, y: start.y },
+            end: { x: end.x, y: end.y }
+        };
+
+        // Add to parsed DXF
+        if (this.parsedDxf) {
+            this.parsedDxf.entities.push(lineEntity);
+        }
+
+        // Render the new line
+        const lineObject = this.renderLine(lineEntity, this.currentDrawingColor, null);
+        lineObject.userData.entity = lineEntity;
+        lineObject.userData.layer = lineEntity.layer;
+        this.entityGroup.add(lineObject);
+
+        // Update drawing state for continuous drawing
+        this.drawingPoints = [{ x: end.x, y: end.y }];
+        this.clearRubberBand();
+        this.render();
+
+        // Notify callback
+        if (this.onDrawingComplete) {
+            this.onDrawingComplete(lineEntity);
+        }
+
+        return lineEntity;
+    }
+
+    // Create a circle from center and radius (for command line input)
+    createCircleFromCenterRadius(center: { x: number; y: number }, radius: number): DxfCircle | null {
+        if (radius < 0.001) {
+            return null;
+        }
+
+        // Create DXF CIRCLE entity
+        const circleEntity: DxfCircle = {
+            type: 'CIRCLE',
+            layer: this.currentDrawingLayer,
+            handle: this.generateHandle(),
+            center: { x: center.x, y: center.y },
+            radius: radius
+        };
+
+        // Add to parsed DXF
+        if (this.parsedDxf) {
+            this.parsedDxf.entities.push(circleEntity);
+        }
+
+        // Render the new circle
+        const circleObject = this.renderCircle(circleEntity, this.currentDrawingColor, null);
+        circleObject.userData.entity = circleEntity;
+        circleObject.userData.layer = circleEntity.layer;
+        this.entityGroup.add(circleObject);
+
+        // Reset drawing state
+        this.drawingPoints = [];
+        this.clearRubberBand();
+        this.render();
+
+        // Notify callback
+        if (this.onDrawingComplete) {
+            this.onDrawingComplete(circleEntity);
+        }
+
+        return circleEntity;
+    }
+
     // Toggle snap and return new state
     toggleSnap(): boolean {
         this.snapEnabled = !this.snapEnabled;
