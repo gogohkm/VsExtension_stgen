@@ -184,25 +184,9 @@ export class AcEdCommandLineUI implements CommandLineInterface {
         };
 
         try {
-            // Fire command start event
-            command.events.commandWillStart.dispatch({
-                command
-            });
-
-            // Execute command
-            await command.execute(context);
-
-            // Fire command end event
-            command.events.commandEnded.dispatch({
-                command
-            });
-
+            await command.trigger(context);
         } catch (error) {
-            if (error instanceof Error && error.message === 'Command cancelled') {
-                this.print('*Cancel*', 'error');
-            } else {
-                this.print(`Error: ${error}`, 'error');
-            }
+            this.print(`Error: ${error}`, 'error');
         } finally {
             this.activeCommand = null;
             this.editor = null;

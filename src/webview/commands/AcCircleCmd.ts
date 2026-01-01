@@ -105,11 +105,17 @@ export class AcCircleCmd extends AcEdCommand {
 
             if (diameterResult.status === PromptStatus.OK && diameterResult.value) {
                 const radius = diameterResult.value / 2;
-                context.renderer.createCircleFromCenterRadius(center, radius);
+                const created = context.renderer.createCircleFromCenterRadius(center, radius);
+                if (created) {
+                    context.renderer.recordAddAction([created]);
+                }
                 context.commandLine.print(`Diameter: ${diameterResult.value.toFixed(4)}`, 'response');
             }
         } else if (radiusResult.status === PromptStatus.OK && radiusResult.value) {
-            context.renderer.createCircleFromCenterRadius(center, radiusResult.value);
+            const created = context.renderer.createCircleFromCenterRadius(center, radiusResult.value);
+            if (created) {
+                context.renderer.recordAddAction([created]);
+            }
             context.commandLine.print(`Radius: ${radiusResult.value.toFixed(4)}`, 'response');
         }
     }
@@ -151,7 +157,10 @@ export class AcCircleCmd extends AcEdCommand {
         };
         const radius = distance(p1, p2) / 2;
 
-        context.renderer.createCircleFromCenterRadius(center, radius);
+        const created = context.renderer.createCircleFromCenterRadius(center, radius);
+        if (created) {
+            context.renderer.recordAddAction([created]);
+        }
         context.commandLine.print(
             `Circle created: center (${center.x.toFixed(4)}, ${center.y.toFixed(4)}), radius ${radius.toFixed(4)}`,
             'success'
@@ -209,7 +218,10 @@ export class AcCircleCmd extends AcEdCommand {
             return;
         }
 
-        context.renderer.createCircleFromCenterRadius(circle.center, circle.radius);
+        const created = context.renderer.createCircleFromCenterRadius(circle.center, circle.radius);
+        if (created) {
+            context.renderer.recordAddAction([created]);
+        }
         context.commandLine.print(
             `Circle created: center (${circle.center.x.toFixed(4)}, ${circle.center.y.toFixed(4)}), radius ${circle.radius.toFixed(4)}`,
             'success'

@@ -101,7 +101,15 @@ export class AcArcCmd extends AcEdCommand {
             return;
         }
 
-        context.renderer.createArcFromCenterRadiusAngles(arc.center, arc.radius, arc.startAngle, arc.endAngle);
+        const created = context.renderer.createArcFromCenterRadiusAngles(
+            arc.center,
+            arc.radius,
+            arc.startAngle,
+            arc.endAngle
+        );
+        if (created) {
+            context.renderer.recordAddAction([created]);
+        }
         context.commandLine.print(
             `Arc created: center (${arc.center.x.toFixed(4)}, ${arc.center.y.toFixed(4)}), radius ${arc.radius.toFixed(4)}`,
             'success'
@@ -159,7 +167,10 @@ export class AcArcCmd extends AcEdCommand {
         const startDeg = startAngle * 180 / Math.PI;
         const endDeg = endAngle * 180 / Math.PI;
 
-        context.renderer.createArcFromCenterRadiusAngles(center, radius, startDeg, endDeg);
+        const created = context.renderer.createArcFromCenterRadiusAngles(center, radius, startDeg, endDeg);
+        if (created) {
+            context.renderer.recordAddAction([created]);
+        }
         context.commandLine.print(
             `Arc created: center (${center.x.toFixed(4)}, ${center.y.toFixed(4)}), radius ${radius.toFixed(4)}`,
             'success'

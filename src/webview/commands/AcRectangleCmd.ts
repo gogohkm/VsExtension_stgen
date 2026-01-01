@@ -11,6 +11,7 @@ import { AcEdCommand, EditorContext, AcEditorInterface } from '../editor/command
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { RectangleJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D } from '../editor/input/handler/AcEdPointHandler';
+import { DxfEntity } from '../dxfParser';
 
 export class AcRectangleCmd extends AcEdCommand {
     constructor() {
@@ -69,7 +70,10 @@ export class AcRectangleCmd extends AcEdCommand {
             const secondCorner = secondCornerResult.value;
 
             // Create rectangle as 4 lines (closed polyline)
-            this.createRectangle(context, firstCorner, secondCorner);
+            const created = this.createRectangle(context, firstCorner, secondCorner);
+            if (created.length > 0) {
+                context.renderer.recordAddAction(created);
+            }
 
             context.commandLine.print(
                 `Rectangle created: (${firstCorner.x.toFixed(4)}, ${firstCorner.y.toFixed(4)}) to (${secondCorner.x.toFixed(4)}, ${secondCorner.y.toFixed(4)})`,
@@ -83,7 +87,9 @@ export class AcRectangleCmd extends AcEdCommand {
     /**
      * Creates a rectangle from two corner points
      */
-    private createRectangle(context: EditorContext, p1: Point2D, p2: Point2D): void {
+    private createRectangle(context: EditorContext, p1: Point2D, p2: Point2D): DxfEntity[] {
+        const created: DxfEntity[] = [];
+
         // Calculate all 4 corners
         const corners: Point2D[] = [
             { x: p1.x, y: p1.y },
@@ -96,7 +102,12 @@ export class AcRectangleCmd extends AcEdCommand {
         for (let i = 0; i < 4; i++) {
             const start = corners[i];
             const end = corners[(i + 1) % 4];
-            context.renderer.createLineFromPoints(start, end);
+            const entity = context.renderer.createLineFromPoints(start, end);
+            if (entity) {
+                created.push(entity);
+            }
         }
+
+        return created;
     }
 }

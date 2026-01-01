@@ -11,8 +11,7 @@
 import { AcEdCommand, EditorContext, AcEditorInterface } from '../editor/command/AcEdCommand';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { LineJig } from '../editor/input/AcEdPreviewJig';
-import { Point2D } from '../editor/input/handler/AcEdPointHandler';
-import { DxfEntity, DxfLine, DxfCircle, DxfArc, DxfPoint_ } from '../dxfParser';
+import { DxfEntity } from '../dxfParser';
 
 export class AcMoveCmd extends AcEdCommand {
     constructor() {
@@ -84,140 +83,14 @@ export class AcMoveCmd extends AcEdCommand {
      */
     private moveSelectedEntities(context: EditorContext, dx: number, dy: number): number {
         const selectedObjects = context.renderer.getSelectedEntities();
-        let count = 0;
+        const entities = selectedObjects
+            .map(object => object.userData.entity as DxfEntity | undefined)
+            .filter((entity): entity is DxfEntity => !!entity);
 
-        for (const object of selectedObjects) {
-            const entity = object.userData.entity as DxfEntity;
-            if (!entity) continue;
-
-            // 1. Update entity data (for persistence/export)
-            this.applyDisplacement(entity, dx, dy);
-
-            // 2. Update Three.js object position directly (for immediate visual update)
-            object.position.x += dx;
-            object.position.y += dy;
-
-            count++;
-        }
-
-        // Clear selection and render (no need for full re-render)
+        context.renderer.moveEntities(entities, dx, dy);
         context.renderer.clearSelection();
-        context.renderer.render();
+        context.renderer.recordMoveAction(entities, dx, dy);
 
-        return count;
-    }
-
-    /**
-     * Applies displacement to an entity based on its type
-     */
-    private applyDisplacement(entity: DxfEntity, dx: number, dy: number): void {
-        switch (entity.type) {
-            case 'LINE': {
-                const line = entity as DxfLine;
-                line.start.x += dx;
-                line.start.y += dy;
-                line.end.x += dx;
-                line.end.y += dy;
-                break;
-            }
-            case 'CIRCLE': {
-                const circle = entity as DxfCircle;
-                circle.center.x += dx;
-                circle.center.y += dy;
-                break;
-            }
-            case 'ARC': {
-                const arc = entity as DxfArc;
-                arc.center.x += dx;
-                arc.center.y += dy;
-                break;
-            }
-            case 'POINT': {
-                const point = entity as DxfPoint_;
-                point.position.x += dx;
-                point.position.y += dy;
-                break;
-            }
-            case 'LWPOLYLINE':
-            case 'POLYLINE': {
-                const polyline = entity as any;
-                if (polyline.vertices) {
-                    for (const vertex of polyline.vertices) {
-                        vertex.x += dx;
-                        vertex.y += dy;
-                    }
-                }
-                break;
-            }
-            case 'TEXT':
-            case 'MTEXT': {
-                const text = entity as any;
-                if (text.position) {
-                    text.position.x += dx;
-                    text.position.y += dy;
-                }
-                if (text.insertionPoint) {
-                    text.insertionPoint.x += dx;
-                    text.insertionPoint.y += dy;
-                }
-                break;
-            }
-            case 'ELLIPSE': {
-                const ellipse = entity as any;
-                if (ellipse.center) {
-                    ellipse.center.x += dx;
-                    ellipse.center.y += dy;
-                }
-                break;
-            }
-            case 'SPLINE': {
-                const spline = entity as any;
-                if (spline.controlPoints) {
-                    for (const cp of spline.controlPoints) {
-                        cp.x += dx;
-                        cp.y += dy;
-                    }
-                }
-                if (spline.fitPoints) {
-                    for (const fp of spline.fitPoints) {
-                        fp.x += dx;
-                        fp.y += dy;
-                    }
-                }
-                break;
-            }
-            case 'INSERT': {
-                const insert = entity as any;
-                if (insert.position) {
-                    insert.position.x += dx;
-                    insert.position.y += dy;
-                }
-                break;
-            }
-            case 'DIMENSION': {
-                const dim = entity as any;
-                if (dim.definitionPoint) {
-                    dim.definitionPoint.x += dx;
-                    dim.definitionPoint.y += dy;
-                }
-                if (dim.textMidpoint) {
-                    dim.textMidpoint.x += dx;
-                    dim.textMidpoint.y += dy;
-                }
-                break;
-            }
-            default:
-                // For unknown types, try to move common properties
-                const anyEntity = entity as any;
-                if (anyEntity.position) {
-                    anyEntity.position.x += dx;
-                    anyEntity.position.y += dy;
-                }
-                if (anyEntity.center) {
-                    anyEntity.center.x += dx;
-                    anyEntity.center.y += dy;
-                }
-                break;
-        }
+        return entities.length;
     }
 }

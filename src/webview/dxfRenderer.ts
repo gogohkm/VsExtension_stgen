@@ -85,6 +85,12 @@ export interface SnapPoint {
     entity: THREE.Object3D;
 }
 
+interface UndoAction {
+    label: string;
+    undo: () => void;
+    redo: () => void;
+}
+
 // Snap marker colors
 const SNAP_COLORS: Record<SnapType, number> = {
     [SnapType.ENDPOINT]: 0x00ff00,    // Green
@@ -206,6 +212,11 @@ export class DxfRenderer {
 
     // Material cache for performance
     private materialCache: MaterialCache = new MaterialCache();
+
+    // Undo/redo history
+    private undoStack: UndoAction[] = [];
+    private redoStack: UndoAction[] = [];
+    private applyingHistory: boolean = false;
 
     // Snap markers
     private snapGroup: THREE.Group;
@@ -2224,27 +2235,35 @@ export class DxfRenderer {
         return this.selectedEntities.size;
     }
 
-    deleteSelectedEntities(): number {
-        const count = this.selectedEntities.size;
+    deleteSelectedEntities(recordUndo: boolean = true): number {
+        const selected = Array.from(this.selectedEntities);
+        const count = selected.length;
         if (count === 0) return 0;
 
-        for (const entity of this.selectedEntities) {
+        const entities = selected
+            .map(object => object.userData.entity as DxfEntity | undefined)
+            .filter((entity): entity is DxfEntity => !!entity);
+        const indices = this.parsedDxf
+            ? entities.map(entity => this.parsedDxf!.entities.indexOf(entity))
+            : [];
+
+        for (const object of selected) {
             // Remove from scene
-            this.entityGroup.remove(entity);
+            this.entityGroup.remove(object);
 
             // Clean up materials
-            this.originalMaterials.delete(entity);
+            this.originalMaterials.delete(object);
 
             // Dispose geometry
-            entity.traverse((child) => {
+            object.traverse((child) => {
                 if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
                     child.geometry.dispose();
                 }
             });
 
             // Remove from parsed DXF data if needed
-            if (entity.userData.entity && this.parsedDxf) {
-                const idx = this.parsedDxf.entities.indexOf(entity.userData.entity);
+            if (object.userData.entity && this.parsedDxf) {
+                const idx = this.parsedDxf.entities.indexOf(object.userData.entity);
                 if (idx !== -1) {
                     this.parsedDxf.entities.splice(idx, 1);
                 }
@@ -2254,6 +2273,10 @@ export class DxfRenderer {
         this.selectedEntities.clear();
         this.updateSelectionStatus();
         this.render();
+
+        if (recordUndo && entities.length > 0) {
+            this.recordDeleteAction(entities, indices);
+        }
 
         return count;
     }
@@ -2881,6 +2904,7 @@ export class DxfRenderer {
             lineObject.userData.entity = lineEntity;
             lineObject.userData.layer = lineEntity.layer;
             this.entityGroup.add(lineObject);
+            this.recordAddAction([lineEntity]);
 
             // AutoCAD-style: Continue from last endpoint (don't cancel drawing)
             // Set the endpoint as the new start point for continuous line drawing
@@ -2935,6 +2959,7 @@ export class DxfRenderer {
             circleObject.userData.entity = circleEntity;
             circleObject.userData.layer = circleEntity.layer;
             this.entityGroup.add(circleObject);
+            this.recordAddAction([circleEntity]);
 
             // AutoCAD-style: Ready to draw another circle (don't cancel drawing)
             // Reset points to wait for new center point
@@ -3300,16 +3325,97 @@ export class DxfRenderer {
         return this.snapEnabled;
     }
 
-    // Undo last action (placeholder - needs undo stack implementation)
-    undo(): void {
-        // TODO: Implement undo stack
-        console.log('Undo not yet implemented');
+    private recordAction(action: UndoAction): void {
+        if (this.applyingHistory) {
+            return;
+        }
+        this.undoStack.push(action);
+        this.redoStack = [];
     }
 
-    // Redo last undone action (placeholder - needs redo stack implementation)
+    recordAddAction(entities: DxfEntity[]): void {
+        if (!this.parsedDxf || entities.length === 0) return;
+        const indices = entities.map(entity => this.parsedDxf!.entities.indexOf(entity));
+
+        this.recordAction({
+            label: 'Add',
+            undo: () => {
+                for (const entity of entities) {
+                    this.removeEntityByReference(entity);
+                }
+            },
+            redo: () => {
+                this.insertEntitiesAtIndices(entities, indices);
+            }
+        });
+    }
+
+    recordDeleteAction(entities: DxfEntity[], indices: number[]): void {
+        if (!this.parsedDxf || entities.length === 0) return;
+
+        this.recordAction({
+            label: 'Delete',
+            undo: () => {
+                this.insertEntitiesAtIndices(entities, indices);
+            },
+            redo: () => {
+                for (const entity of entities) {
+                    this.removeEntityByReference(entity);
+                }
+            }
+        });
+    }
+
+    recordMoveAction(entities: DxfEntity[], dx: number, dy: number): void {
+        if (entities.length === 0) return;
+
+        this.recordAction({
+            label: 'Move',
+            undo: () => {
+                this.moveEntities(entities, -dx, -dy);
+            },
+            redo: () => {
+                this.moveEntities(entities, dx, dy);
+            }
+        });
+    }
+
+    // Undo last action
+    undo(): void {
+        if (this.undoStack.length === 0) {
+            console.log('Undo stack is empty');
+            return;
+        }
+
+        const action = this.undoStack.pop()!;
+        this.applyingHistory = true;
+        try {
+            this.clearSelection();
+            action.undo();
+        } finally {
+            this.applyingHistory = false;
+        }
+        this.redoStack.push(action);
+        this.render();
+    }
+
+    // Redo last undone action
     redo(): void {
-        // TODO: Implement redo stack
-        console.log('Redo not yet implemented');
+        if (this.redoStack.length === 0) {
+            console.log('Redo stack is empty');
+            return;
+        }
+
+        const action = this.redoStack.pop()!;
+        this.applyingHistory = true;
+        try {
+            this.clearSelection();
+            action.redo();
+        } finally {
+            this.applyingHistory = false;
+        }
+        this.undoStack.push(action);
+        this.render();
     }
 
     /**
@@ -3366,6 +3472,226 @@ export class DxfRenderer {
         this.render();
     }
 
+    private findObjectByEntity(entity: DxfEntity): THREE.Object3D | undefined {
+        for (const object of this.entityGroup.children) {
+            if (object.userData.entity === entity) {
+                return object;
+            }
+        }
+
+        if (entity.handle) {
+            for (const object of this.entityGroup.children) {
+                const objEntity = object.userData.entity as DxfEntity | undefined;
+                if (objEntity?.handle === entity.handle) {
+                    return object;
+                }
+            }
+        }
+
+        return undefined;
+    }
+
+    private removeEntityByReference(entity: DxfEntity): void {
+        const object = this.findObjectByEntity(entity);
+        if (object) {
+            this.deleteEntity(object);
+            return;
+        }
+
+        if (this.parsedDxf) {
+            const idx = this.parsedDxf.entities.indexOf(entity);
+            if (idx !== -1) {
+                this.parsedDxf.entities.splice(idx, 1);
+            }
+        }
+    }
+
+    private insertEntitiesAtIndices(entities: DxfEntity[], indices: number[]): void {
+        if (!this.parsedDxf) return;
+
+        const pairs = entities.map((entity, i) => ({
+            entity,
+            index: indices[i] ?? -1
+        }));
+
+        pairs.sort((a, b) => {
+            if (a.index < 0 && b.index < 0) return 0;
+            if (a.index < 0) return 1;
+            if (b.index < 0) return -1;
+            return a.index - b.index;
+        });
+
+        for (const pair of pairs) {
+            this.addEntity(pair.entity, {
+                insertIndex: pair.index >= 0 ? pair.index : undefined,
+                render: false
+            });
+        }
+
+        this.render();
+    }
+
+    moveEntities(entities: DxfEntity[], dx: number, dy: number): void {
+        if (entities.length === 0) return;
+
+        let needsReRender = false;
+        for (const entity of entities) {
+            this.applyDisplacementToEntity(entity, dx, dy);
+            const object = this.findObjectByEntity(entity);
+            if (object) {
+                object.position.x += dx;
+                object.position.y += dy;
+            } else {
+                needsReRender = true;
+            }
+        }
+
+        if (needsReRender) {
+            this.reRenderEntities();
+        } else {
+            this.render();
+        }
+    }
+
+    applyDisplacementToEntity(entity: DxfEntity, dx: number, dy: number): void {
+        switch (entity.type) {
+            case 'LINE': {
+                const line = entity as DxfLine;
+                line.start.x += dx;
+                line.start.y += dy;
+                line.end.x += dx;
+                line.end.y += dy;
+                break;
+            }
+            case 'CIRCLE': {
+                const circle = entity as DxfCircle;
+                circle.center.x += dx;
+                circle.center.y += dy;
+                break;
+            }
+            case 'ARC': {
+                const arc = entity as DxfArc;
+                arc.center.x += dx;
+                arc.center.y += dy;
+                break;
+            }
+            case 'POINT': {
+                const point = entity as DxfPoint_;
+                point.position.x += dx;
+                point.position.y += dy;
+                break;
+            }
+            case 'LWPOLYLINE':
+            case 'POLYLINE': {
+                const polyline = entity as DxfPolyline;
+                for (const vertex of polyline.vertices) {
+                    vertex.x += dx;
+                    vertex.y += dy;
+                }
+                break;
+            }
+            case 'TEXT':
+            case 'MTEXT': {
+                const text = entity as DxfText;
+                text.position.x += dx;
+                text.position.y += dy;
+                if (text.alignmentPoint) {
+                    text.alignmentPoint.x += dx;
+                    text.alignmentPoint.y += dy;
+                }
+                break;
+            }
+            case 'ELLIPSE': {
+                const ellipse = entity as DxfEllipse;
+                ellipse.center.x += dx;
+                ellipse.center.y += dy;
+                break;
+            }
+            case 'SPLINE': {
+                const spline = entity as DxfSpline;
+                for (const cp of spline.controlPoints) {
+                    cp.x += dx;
+                    cp.y += dy;
+                }
+                for (const fp of spline.fitPoints) {
+                    fp.x += dx;
+                    fp.y += dy;
+                }
+                break;
+            }
+            case 'INSERT': {
+                const insert = entity as DxfInsert;
+                insert.position.x += dx;
+                insert.position.y += dy;
+                break;
+            }
+            case 'DIMENSION': {
+                const dim = entity as DxfDimension;
+                dim.definitionPoint.x += dx;
+                dim.definitionPoint.y += dy;
+                dim.middlePoint.x += dx;
+                dim.middlePoint.y += dy;
+                break;
+            }
+            case 'LEADER': {
+                const leader = entity as DxfLeader;
+                for (const vertex of leader.vertices) {
+                    vertex.x += dx;
+                    vertex.y += dy;
+                }
+                break;
+            }
+            case 'WIPEOUT': {
+                const wipeout = entity as DxfWipeout;
+                wipeout.insertionPoint.x += dx;
+                wipeout.insertionPoint.y += dy;
+                for (const point of wipeout.clipBoundary) {
+                    point.x += dx;
+                    point.y += dy;
+                }
+                break;
+            }
+            case 'ATTRIB':
+            case 'ATTDEF': {
+                const attrib = entity as DxfAttrib;
+                attrib.position.x += dx;
+                attrib.position.y += dy;
+                break;
+            }
+            case 'SOLID':
+            case '3DFACE': {
+                const solid = entity as DxfSolid;
+                for (const point of solid.points) {
+                    point.x += dx;
+                    point.y += dy;
+                }
+                break;
+            }
+            case 'HATCH': {
+                const hatch = entity as DxfHatch;
+                for (const path of hatch.boundaryPaths) {
+                    for (const point of path) {
+                        point.x += dx;
+                        point.y += dy;
+                    }
+                }
+                break;
+            }
+            default: {
+                const anyEntity = entity as any;
+                if (anyEntity.position) {
+                    anyEntity.position.x += dx;
+                    anyEntity.position.y += dy;
+                }
+                if (anyEntity.center) {
+                    anyEntity.center.x += dx;
+                    anyEntity.center.y += dy;
+                }
+                break;
+            }
+        }
+    }
+
     /**
      * Clone an entity and add it to the DXF
      * Returns the new cloned entity
@@ -3400,11 +3726,18 @@ export class DxfRenderer {
      * @param entity The entity with coordinates already set to final position
      * @returns The Three.js object created for the entity
      */
-    addEntity(entity: DxfEntity): THREE.Object3D | null {
+    addEntity(entity: DxfEntity, options: { insertIndex?: number; render?: boolean } = {}): THREE.Object3D | null {
         if (!this.parsedDxf) return null;
 
+        const insertIndex = options.insertIndex;
+        const shouldRender = options.render !== false;
+
         // Add to parsed DXF data
-        this.parsedDxf.entities.push(entity);
+        if (insertIndex === undefined || insertIndex < 0 || insertIndex > this.parsedDxf.entities.length) {
+            this.parsedDxf.entities.push(entity);
+        } else {
+            this.parsedDxf.entities.splice(insertIndex, 0, entity);
+        }
 
         // Render the entity at its current coordinates
         const object = this.renderEntity(entity, this.parsedDxf);
@@ -3414,7 +3747,9 @@ export class DxfRenderer {
             this.entityGroup.add(object);
         }
 
-        this.render();
+        if (shouldRender) {
+            this.render();
+        }
         return object;
     }
 

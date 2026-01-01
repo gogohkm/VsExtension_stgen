@@ -5,6 +5,7 @@
  */
 
 import { AcEdCommandStack } from './command/AcEdCommandStack';
+import { AcEdCommand } from './command/AcEdCommand';
 import { AcLineCmd } from '../commands/AcLineCmd';
 import { AcCircleCmd } from '../commands/AcCircleCmd';
 import { AcArcCmd } from '../commands/AcArcCmd';
@@ -41,24 +42,31 @@ import { AcDimCmd } from '../commands/AcDimCmd';
 export function registerCadCommands(): void {
     const stack = AcEdCommandStack.instance;
 
+    const safeAdd = (group: string, globalName: string, localName: string, command: AcEdCommand) => {
+        if (stack.lookupGlobalCmd(globalName)) {
+            return;
+        }
+        stack.addCommand(group, globalName, localName, command);
+    };
+
     // Drawing commands
-    stack.addCommand('ACAD', 'LINE', 'L', new AcLineCmd());
-    stack.addCommand('ACAD', 'CIRCLE', 'C', new AcCircleCmd());
-    stack.addCommand('ACAD', 'ARC', 'A', new AcArcCmd());
-    stack.addCommand('ACAD', 'RECTANGLE', 'REC', new AcRectangleCmd());
-    stack.addCommand('ACAD', 'PLINE', 'PL', new AcPolylineCmd());
+    safeAdd('ACAD', 'LINE', 'L', new AcLineCmd());
+    safeAdd('ACAD', 'CIRCLE', 'C', new AcCircleCmd());
+    safeAdd('ACAD', 'ARC', 'A', new AcArcCmd());
+    safeAdd('ACAD', 'RECTANGLE', 'REC', new AcRectangleCmd());
+    safeAdd('ACAD', 'PLINE', 'PL', new AcPolylineCmd());
 
     // Modify commands
-    stack.addCommand('ACAD', 'MOVE', 'M', new AcMoveCmd());
-    stack.addCommand('ACAD', 'COPY', 'CO', new AcCopyCmd());
-    stack.addCommand('ACAD', 'ERASE', 'E', new AcEraseCmd());
+    safeAdd('ACAD', 'MOVE', 'M', new AcMoveCmd());
+    safeAdd('ACAD', 'COPY', 'CO', new AcCopyCmd());
+    safeAdd('ACAD', 'ERASE', 'E', new AcEraseCmd());
 
     // Annotation commands
-    stack.addCommand('ACAD', 'DIM', 'DLI', new AcDimCmd());
-    stack.addCommand('ACAD', 'DIMLINEAR', 'DIMLIN', new AcDimCmd());
+    safeAdd('ACAD', 'DIM', 'DLI', new AcDimCmd());
+    safeAdd('ACAD', 'DIMLINEAR', 'DIMLIN', new AcDimCmd());
 
     // Utility commands
-    stack.addCommand('ACAD', 'DIST', 'DI', new AcDistanceCmd());
+    safeAdd('ACAD', 'DIST', 'DI', new AcDistanceCmd());
 }
 
 /**

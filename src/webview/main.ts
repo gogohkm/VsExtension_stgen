@@ -267,10 +267,10 @@ class DxfViewerApp {
             }
         });
 
-        // DELETE command
+        // DELETE command (simple utility version - AcEraseCmd is the full CAD command)
         this.commandLine.registerSimpleCommand({
             name: 'DELETE',
-            aliases: ['DEL', 'ERASE', 'E'],
+            aliases: ['DEL'],
             description: 'Delete selected entities',
             execute: () => {
                 if (this.renderer) {

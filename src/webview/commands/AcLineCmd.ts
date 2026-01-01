@@ -13,6 +13,7 @@ import { AcEdKeyword } from '../editor/input/prompt/AcEdPromptOptions';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { LineJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D } from '../editor/input/handler/AcEdPointHandler';
+import { DxfEntity } from '../dxfParser';
 import * as THREE from 'three';
 
 export class AcLineCmd extends AcEdCommand {
@@ -133,6 +134,14 @@ export class AcLineCmd extends AcEdCommand {
 
         // Cleanup
         context.renderer.cancelDrawing();
+
+        const created = this.createdEntities
+            .map(object => object.userData.entity as DxfEntity | undefined)
+            .filter((entity): entity is DxfEntity => !!entity);
+
+        if (created.length > 0) {
+            context.renderer.recordAddAction(created);
+        }
 
         if (this.points.length >= 2) {
             context.commandLine.print('Line command completed', 'success');

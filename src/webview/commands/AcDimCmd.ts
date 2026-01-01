@@ -17,6 +17,7 @@ import { AcEdCommand, EditorContext, AcEditorInterface } from '../editor/command
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { LineJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D, distance } from '../editor/input/handler/AcEdPointHandler';
+import { DxfEntity } from '../dxfParser';
 
 // Dimension settings
 const DIM_ARROW_SIZE = 2.5;  // Arrow head size
@@ -86,7 +87,10 @@ export class AcDimCmd extends AcEdCommand {
         const dimGeometry = this.calculateDimensionGeometry(firstPoint, secondPoint, dimLineLocation);
 
         // Create dimension entities
-        this.createDimensionEntities(context, dimGeometry);
+        const created = this.createDimensionEntities(context, dimGeometry);
+        if (created.length > 0) {
+            context.renderer.recordAddAction(created);
+        }
 
         context.renderer.cancelDrawing();
         context.commandLine.print(`Dimension created: ${dimGeometry.measurement.toFixed(4)}`, 'success');
@@ -186,34 +190,44 @@ export class AcDimCmd extends AcEdCommand {
     /**
      * Create dimension entities and add them to the renderer
      */
-    private createDimensionEntities(context: EditorContext, geom: DimensionGeometry): void {
+    private createDimensionEntities(context: EditorContext, geom: DimensionGeometry): DxfEntity[] {
+        const created: DxfEntity[] = [];
+
         // Create extension line 1
-        context.renderer.createLineFromPoints(geom.ext1Start, geom.ext1End);
+        const ext1 = context.renderer.createLineFromPoints(geom.ext1Start, geom.ext1End);
+        if (ext1) created.push(ext1);
 
         // Create extension line 2
-        context.renderer.createLineFromPoints(geom.ext2Start, geom.ext2End);
+        const ext2 = context.renderer.createLineFromPoints(geom.ext2Start, geom.ext2End);
+        if (ext2) created.push(ext2);
 
         // Create dimension line
-        context.renderer.createLineFromPoints(geom.dimLineStart, geom.dimLineEnd);
+        const dimLine = context.renderer.createLineFromPoints(geom.dimLineStart, geom.dimLineEnd);
+        if (dimLine) created.push(dimLine);
 
         // Create arrow heads
-        this.createArrowHead(context, geom.dimLineStart, geom.dimLineEnd);
-        this.createArrowHead(context, geom.dimLineEnd, geom.dimLineStart);
+        created.push(...this.createArrowHead(context, geom.dimLineStart, geom.dimLineEnd));
+        created.push(...this.createArrowHead(context, geom.dimLineEnd, geom.dimLineStart));
 
         // Create dimension text
-        this.createDimensionText(context, geom);
+        const text = this.createDimensionText(context, geom);
+        if (text) created.push(text);
+
+        return created;
     }
 
     /**
      * Create arrow head at the given position pointing toward target
      */
-    private createArrowHead(context: EditorContext, position: Point2D, target: Point2D): void {
+    private createArrowHead(context: EditorContext, position: Point2D, target: Point2D): DxfEntity[] {
+        const created: DxfEntity[] = [];
+
         // Calculate arrow direction
         const dx = target.x - position.x;
         const dy = target.y - position.y;
         const len = Math.sqrt(dx * dx + dy * dy);
 
-        if (len < 0.001) return;
+        if (len < 0.001) return created;
 
         // Normalize direction
         const dirX = dx / len;
@@ -239,19 +253,23 @@ export class AcDimCmd extends AcEdCommand {
         };
 
         // Create arrow lines
-        context.renderer.createLineFromPoints(tip, left);
-        context.renderer.createLineFromPoints(tip, right);
+        const leftLine = context.renderer.createLineFromPoints(tip, left);
+        if (leftLine) created.push(leftLine);
+        const rightLine = context.renderer.createLineFromPoints(tip, right);
+        if (rightLine) created.push(rightLine);
+
+        return created;
     }
 
     /**
      * Create dimension text
      */
-    private createDimensionText(context: EditorContext, geom: DimensionGeometry): void {
+    private createDimensionText(context: EditorContext, geom: DimensionGeometry): DxfEntity | null {
         // Format the measurement text
         const textContent = geom.measurement.toFixed(2);
 
         // Create text entity for dimension annotation
-        context.renderer.createTextEntity(
+        return context.renderer.createTextEntity(
             geom.textPosition,
             textContent,
             DIM_TEXT_HEIGHT,
