@@ -1980,6 +1980,13 @@ export class DxfRenderer {
 
     // ========== Entity Deletion ==========
 
+    /**
+     * Gets the count of currently selected entities
+     */
+    getSelectedCount(): number {
+        return this.selectedEntities.size;
+    }
+
     deleteSelectedEntities(): number {
         const count = this.selectedEntities.size;
         if (count === 0) return 0;
@@ -2898,6 +2905,135 @@ export class DxfRenderer {
         return circleEntity;
     }
 
+    /**
+     * Create an arc from center, radius, and angles
+     */
+    createArcFromCenterRadiusAngles(
+        center: { x: number; y: number },
+        radius: number,
+        startAngle: number,
+        endAngle: number
+    ): DxfArc | null {
+        if (radius < 0.001) {
+            return null;
+        }
+
+        // Create DXF ARC entity
+        const arcEntity: DxfArc = {
+            type: 'ARC',
+            layer: this.currentDrawingLayer,
+            handle: this.generateHandle(),
+            center: { x: center.x, y: center.y },
+            radius: radius,
+            startAngle: startAngle,
+            endAngle: endAngle
+        };
+
+        // Add to parsed DXF
+        if (this.parsedDxf) {
+            this.parsedDxf.entities.push(arcEntity);
+        }
+
+        // Render the new arc
+        const arcObject = this.renderArc(arcEntity, this.currentDrawingColor, null);
+        arcObject.userData.entity = arcEntity;
+        arcObject.userData.layer = arcEntity.layer;
+        this.entityGroup.add(arcObject);
+
+        // Reset drawing state
+        this.drawingPoints = [];
+        this.clearRubberBand();
+        this.render();
+
+        // Notify callback
+        if (this.onDrawingComplete) {
+            this.onDrawingComplete(arcEntity);
+        }
+
+        return arcEntity;
+    }
+
+    /**
+     * Update rubber band for line preview
+     */
+    updateLineRubberBandFromPoints(start: { x: number; y: number }, end: { x: number; y: number }): void {
+        this.clearRubberBand();
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const points = [
+            new THREE.Vector3(start.x, start.y, 0.1),
+            new THREE.Vector3(end.x, end.y, 0.1)
+        ];
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        this.rubberBandLine = new THREE.Line(geometry, material);
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
+    /**
+     * Update rubber band for circle preview
+     */
+    updateCircleRubberBandFromCenterRadius(center: { x: number; y: number }, radius: number): void {
+        this.clearRubberBand();
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const segments = 64;
+        const points: THREE.Vector3[] = [];
+        for (let i = 0; i <= segments; i++) {
+            const theta = (i / segments) * Math.PI * 2;
+            points.push(new THREE.Vector3(
+                center.x + radius * Math.cos(theta),
+                center.y + radius * Math.sin(theta),
+                0.1
+            ));
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        this.rubberBandLine = new THREE.Line(geometry, material);
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
+    /**
+     * Update rubber band for rectangle preview
+     */
+    updateRectangleRubberBand(p1: { x: number; y: number }, p2: { x: number; y: number }): void {
+        this.clearRubberBand();
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const points = [
+            new THREE.Vector3(p1.x, p1.y, 0.1),
+            new THREE.Vector3(p2.x, p1.y, 0.1),
+            new THREE.Vector3(p2.x, p2.y, 0.1),
+            new THREE.Vector3(p1.x, p2.y, 0.1),
+            new THREE.Vector3(p1.x, p1.y, 0.1)
+        ];
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        this.rubberBandLine = new THREE.Line(geometry, material);
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
     // Toggle snap and return new state
     toggleSnap(): boolean {
         this.snapEnabled = !this.snapEnabled;
@@ -2922,5 +3058,107 @@ export class DxfRenderer {
     redo(): void {
         // TODO: Implement redo stack
         console.log('Redo not yet implemented');
+    }
+
+    /**
+     * Re-renders all entities in the entity group.
+     * Used after entity data has been modified (e.g., by MOVE or COPY commands).
+     */
+    reRenderEntities(): void {
+        if (!this.parsedDxf) return;
+
+        // Clear existing entity group
+        while (this.entityGroup.children.length > 0) {
+            const child = this.entityGroup.children[0];
+            this.entityGroup.remove(child);
+            // Dispose geometry
+            child.traverse((obj) => {
+                if (obj instanceof THREE.Line || obj instanceof THREE.Points || obj instanceof THREE.Mesh) {
+                    obj.geometry.dispose();
+                }
+            });
+        }
+
+        // Clear selection state
+        this.selectedEntities.clear();
+        this.originalMaterials.clear();
+
+        // Re-render all entities
+        for (const entity of this.parsedDxf.entities) {
+            const object = this.renderEntity(entity, this.parsedDxf);
+            if (object) {
+                object.userData.entity = entity;
+                object.userData.layer = entity.layer;
+                this.entityGroup.add(object);
+            }
+        }
+
+        this.updateSelectionStatus();
+        this.render();
+    }
+
+    /**
+     * Clone an entity and add it to the DXF
+     * Returns the new cloned entity
+     */
+    cloneEntity(entity: DxfEntity): DxfEntity | null {
+        if (!this.parsedDxf) return null;
+
+        // Deep clone the entity
+        const cloned = JSON.parse(JSON.stringify(entity)) as DxfEntity;
+
+        // Generate new handle
+        cloned.handle = this.generateHandle();
+
+        // Add to parsed DXF
+        this.parsedDxf.entities.push(cloned);
+
+        // Render the new entity
+        const object = this.renderEntity(cloned, this.parsedDxf);
+        if (object) {
+            object.userData.entity = cloned;
+            object.userData.layer = cloned.layer;
+            this.entityGroup.add(object);
+        }
+
+        return cloned;
+    }
+
+    /**
+     * Create a text entity at the specified position
+     * Used for dimension annotations
+     */
+    createTextEntity(
+        position: { x: number; y: number },
+        text: string,
+        height: number,
+        rotation: number = 0
+    ): DxfText | null {
+        // Create DXF TEXT entity
+        const textEntity: DxfText = {
+            type: 'TEXT',
+            layer: this.currentDrawingLayer,
+            handle: this.generateHandle(),
+            position: { x: position.x, y: position.y },
+            text: text,
+            height: height,
+            rotation: rotation,
+            horizontalAlignment: 1, // Center
+            verticalAlignment: 2   // Middle
+        };
+
+        // Add to parsed DXF
+        if (this.parsedDxf) {
+            this.parsedDxf.entities.push(textEntity);
+        }
+
+        // Render the new text
+        const textObject = this.renderText(textEntity, this.currentDrawingColor);
+        textObject.userData.entity = textEntity;
+        textObject.userData.layer = textEntity.layer;
+        this.entityGroup.add(textObject);
+        this.render();
+
+        return textEntity;
     }
 }

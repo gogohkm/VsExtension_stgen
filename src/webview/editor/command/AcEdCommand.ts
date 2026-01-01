@@ -37,11 +37,27 @@ export interface AcEdCommandEventArgs {
 }
 
 /**
+ * Forward declaration for AcEditor to avoid circular dependency
+ */
+export interface AcEditorInterface {
+    getPoint(options: any): Promise<any>;
+    getDistance(options: any): Promise<any>;
+    getSelection(options?: any): Promise<any>;
+    handleTextInput(input: string): void;
+    handleMouseClick(worldPoint: { x: number; y: number }): void;
+    handleMouseMove(worldPoint: { x: number; y: number }): void;
+    handleCancel(): void;
+    isWaitingForInput(): boolean;
+    getRenderer(): DxfRenderer;
+}
+
+/**
  * Context passed to command execution
  */
 export interface EditorContext {
     renderer: DxfRenderer;
     commandLine: CommandLineInterface;
+    editor: AcEditorInterface;
 }
 
 /**

@@ -81,12 +81,13 @@ export class AcEdCommandLineUI implements CommandLineInterface {
                 this.executeInput();
                 break;
             case ' ': // Space bar acts like Enter (AutoCAD style)
-                const input = this.inputElement.value.trim();
-                // Only act as Enter if input is a command, not coordinates
-                if (input && !input.includes(',') && !input.includes('<')) {
-                    e.preventDefault();
-                    this.executeInput();
-                }
+                // In AutoCAD, spacebar works as Enter for:
+                // 1. Empty input (repeat last command or confirm)
+                // 2. Command names
+                // 3. Coordinate input (including comma-separated and polar)
+                // Only exception: when typing text that needs spaces
+                e.preventDefault();
+                this.executeInput();
                 break;
             case 'ArrowUp':
                 e.preventDefault();
@@ -171,15 +172,16 @@ export class AcEdCommandLineUI implements CommandLineInterface {
             return;
         }
 
-        // Create editor context
-        const context: EditorContext = {
-            renderer: this.renderer,
-            commandLine: this
-        };
-
         // Create editor instance for this command
         this.editor = new AcEditor(this.renderer, this);
         this.activeCommand = command;
+
+        // Create editor context with the editor instance
+        const context: EditorContext = {
+            renderer: this.renderer,
+            commandLine: this,
+            editor: this.editor
+        };
 
         try {
             // Fire command start event

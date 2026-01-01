@@ -6,8 +6,8 @@
 
 import { DxfRenderer } from '../dxfRenderer';
 import { CommandLineInterface } from './command/AcEdCommand';
-import { AcEdPromptPointOptions, AcEdPromptDistanceOptions, formatKeywords, matchKeyword } from './input/prompt/AcEdPromptOptions';
-import { AcEdPromptPointResult, AcEdPromptDistanceResult, PromptStatus } from './input/prompt/AcEdPromptResult';
+import { AcEdPromptPointOptions, AcEdPromptDistanceOptions, AcEdPromptSelectionOptions, formatKeywords, matchKeyword } from './input/prompt/AcEdPromptOptions';
+import { AcEdPromptPointResult, AcEdPromptDistanceResult, AcEdPromptSelectionResult, PromptStatus } from './input/prompt/AcEdPromptResult';
 import { parseCoordinate, isCoordinateInput, isNumberInput, parseNumber, formatPoint, Point2D, distance } from './input/handler/AcEdPointHandler';
 
 /**
@@ -17,7 +17,8 @@ enum InputMode {
     None,
     Point,
     Distance,
-    String
+    String,
+    Selection
 }
 
 /**
@@ -68,6 +69,29 @@ export class AcEditor {
     }
 
     /**
+     * Gets entity selection from user
+     * Allows user to click on entities to select them
+     * Returns when user presses Enter (empty input) to confirm selection
+     */
+    async getSelection(options: AcEdPromptSelectionOptions = {}): Promise<AcEdPromptSelectionResult> {
+        return new Promise((resolve, reject) => {
+            this.inputMode = InputMode.Selection;
+            this.inputResolve = resolve;
+            this.inputReject = reject;
+            this.currentOptions = options;
+
+            // Show prompt
+            const message = options.message || 'Select objects';
+            this.commandLine.setPrompt(`${message}:`);
+            this.commandLine.focus();
+
+            // Store initial selection count
+            const initialCount = this.renderer.getSelectedCount();
+            this.commandLine.print(`${initialCount} object(s) currently selected`, 'response');
+        });
+    }
+
+    /**
      * Gets a distance from user input
      */
     async getDistance(options: AcEdPromptDistanceOptions): Promise<AcEdPromptDistanceResult> {
@@ -101,6 +125,15 @@ export class AcEditor {
 
         // Check for empty input
         if (!trimmed) {
+            if (this.inputMode === InputMode.Selection) {
+                // In selection mode, empty input confirms selection
+                const selectedEntities = this.renderer.getSelectedEntities();
+                this.resolveInput({
+                    status: PromptStatus.OK,
+                    value: selectedEntities
+                });
+                return;
+            }
             if (this.currentOptions?.allowNone) {
                 this.resolveInput({ status: PromptStatus.None });
             }
@@ -124,6 +157,11 @@ export class AcEditor {
                 break;
             case InputMode.Distance:
                 this.handleDistanceInput(trimmed);
+                break;
+            case InputMode.Selection:
+                // In selection mode, any non-keyword input should not happen
+                // as users only click to select. But if they type, ignore it.
+                this.commandLine.print('Click to select objects, press Enter when done', 'response');
                 break;
         }
     }
@@ -201,6 +239,13 @@ export class AcEditor {
                         value: dist
                     });
                 }
+                break;
+
+            case InputMode.Selection:
+                // In selection mode, clicks are handled by renderer for selection
+                // Just update the count display
+                const count = this.renderer.getSelectedCount();
+                this.commandLine.print(`${count} object(s) selected`, 'response');
                 break;
         }
     }

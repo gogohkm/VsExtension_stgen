@@ -7,9 +7,36 @@
 import { AcEdCommandStack } from './command/AcEdCommandStack';
 import { AcLineCmd } from '../commands/AcLineCmd';
 import { AcCircleCmd } from '../commands/AcCircleCmd';
+import { AcArcCmd } from '../commands/AcArcCmd';
+import { AcRectangleCmd } from '../commands/AcRectangleCmd';
+import { AcPolylineCmd } from '../commands/AcPolylineCmd';
+import { AcDistanceCmd } from '../commands/AcDistanceCmd';
+import { AcEraseCmd } from '../commands/AcEraseCmd';
+import { AcMoveCmd } from '../commands/AcMoveCmd';
+import { AcCopyCmd } from '../commands/AcCopyCmd';
+import { AcDimCmd } from '../commands/AcDimCmd';
 
 /**
  * Registers all CAD commands to the command stack
+ *
+ * Command List (Design-Web compatible):
+ * Drawing Commands:
+ * - LINE (L): Draw line segments
+ * - CIRCLE (C): Draw circles
+ * - ARC (A): Draw arcs
+ * - RECTANGLE (REC): Draw rectangles
+ * - PLINE (PL): Draw polylines
+ *
+ * Modify Commands:
+ * - MOVE (M): Move selected entities
+ * - COPY (CO): Copy selected entities
+ * - ERASE (E): Delete selected entities
+ *
+ * Annotation Commands:
+ * - DIM (DLI): Create linear dimensions
+ *
+ * Utility Commands:
+ * - DIST (DI): Measure distance between points
  */
 export function registerCadCommands(): void {
     const stack = AcEdCommandStack.instance;
@@ -17,11 +44,21 @@ export function registerCadCommands(): void {
     // Drawing commands
     stack.addCommand('ACAD', 'LINE', 'L', new AcLineCmd());
     stack.addCommand('ACAD', 'CIRCLE', 'C', new AcCircleCmd());
+    stack.addCommand('ACAD', 'ARC', 'A', new AcArcCmd());
+    stack.addCommand('ACAD', 'RECTANGLE', 'REC', new AcRectangleCmd());
+    stack.addCommand('ACAD', 'PLINE', 'PL', new AcPolylineCmd());
 
-    // Future commands can be added here:
-    // stack.addCommand('ACAD', 'ARC', 'A', new AcArcCmd());
-    // stack.addCommand('ACAD', 'RECTANGLE', 'REC', new AcRectangleCmd());
-    // stack.addCommand('ACAD', 'POLYLINE', 'PL', new AcPolylineCmd());
+    // Modify commands
+    stack.addCommand('ACAD', 'MOVE', 'M', new AcMoveCmd());
+    stack.addCommand('ACAD', 'COPY', 'CO', new AcCopyCmd());
+    stack.addCommand('ACAD', 'ERASE', 'E', new AcEraseCmd());
+
+    // Annotation commands
+    stack.addCommand('ACAD', 'DIM', 'DLI', new AcDimCmd());
+    stack.addCommand('ACAD', 'DIMLINEAR', 'DIMLIN', new AcDimCmd());
+
+    // Utility commands
+    stack.addCommand('ACAD', 'DIST', 'DI', new AcDistanceCmd());
 }
 
 /**

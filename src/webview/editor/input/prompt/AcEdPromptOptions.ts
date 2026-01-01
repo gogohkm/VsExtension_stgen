@@ -61,6 +61,18 @@ export interface AcEdPromptStringOptions extends AcEdPromptOptionsBase {
 }
 
 /**
+ * Options for entity selection prompt
+ */
+export interface AcEdPromptSelectionOptions {
+    /** Message shown to user */
+    message?: string;
+    /** Allow single selection only */
+    singleOnly?: boolean;
+    /** Minimum number of entities required */
+    minCount?: number;
+}
+
+/**
  * Helper to create keyword options string for display
  * e.g., "[Close/Undo]"
  */

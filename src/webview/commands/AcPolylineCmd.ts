@@ -1,11 +1,12 @@
 /**
- * LINE Command - Draws continuous line segments
+ * POLYLINE Command - Draws continuous polyline segments
  *
  * Usage:
- *   LINE
- *   Specify first point: (click or enter coordinates)
- *   Specify next point [Undo]: (click or enter coordinates)
- *   Specify next point [Close/Undo]: (click, coordinates, or Enter to finish)
+ *   POLYLINE (or PLINE)
+ *   Specify start point: (click or enter coordinates)
+ *   Specify next point [Close/Undo]: (click or enter coordinates)
+ *   ...
+ *   Press Enter to finish
  */
 
 import { AcEdCommand, EditorContext, AcEditorInterface } from '../editor/command/AcEdCommand';
@@ -14,25 +15,25 @@ import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { LineJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D } from '../editor/input/handler/AcEdPointHandler';
 
-export class AcLineCmd extends AcEdCommand {
+export class AcPolylineCmd extends AcEdCommand {
     private points: Point2D[] = [];
 
     constructor() {
         super();
-        this.globalName = 'LINE';
-        this.localName = 'L';
-        this.description = 'Draw line segments';
+        this.globalName = 'PLINE';
+        this.localName = 'PL';
+        this.description = 'Draw a polyline';
     }
 
     async execute(context: EditorContext): Promise<void> {
         const editor = context.editor;
         this.points = [];
 
-        context.commandLine.print('LINE', 'command');
+        context.commandLine.print('PLINE', 'command');
 
         // Get first point
         const firstPointResult = await editor.getPoint({
-            message: 'Specify first point'
+            message: 'Specify start point'
         });
 
         if (firstPointResult.status !== PromptStatus.OK || !firstPointResult.value) {
@@ -42,7 +43,7 @@ export class AcLineCmd extends AcEdCommand {
         this.points.push(firstPointResult.value);
         context.renderer.addDrawingPoint(firstPointResult.value.x, firstPointResult.value.y);
 
-        // Continuous line drawing loop
+        // Continuous polyline drawing loop
         let continueDrawing = true;
         while (continueDrawing) {
             this.checkCancelled();
@@ -96,7 +97,6 @@ export class AcLineCmd extends AcEdCommand {
                         case 'UNDO':
                             if (this.points.length > 1) {
                                 this.points.pop();
-                                // TODO: Remove last line from renderer
                                 context.commandLine.print('Undo', 'response');
                             } else if (this.points.length === 1) {
                                 this.points.pop();
@@ -122,7 +122,7 @@ export class AcLineCmd extends AcEdCommand {
         context.renderer.cancelDrawing();
 
         if (this.points.length >= 2) {
-            context.commandLine.print('Line command completed', 'success');
+            context.commandLine.print(`Polyline created with ${this.points.length} vertices`, 'success');
         }
     }
 }

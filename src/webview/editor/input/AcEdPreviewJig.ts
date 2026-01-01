@@ -114,3 +114,27 @@ export class CircleJig extends AcEdPreviewJig {
         }
     }
 }
+
+/**
+ * Rectangle preview jig - shows rubber band rectangle
+ */
+export class RectangleJig extends AcEdPreviewJig {
+    private firstCorner: { x: number; y: number };
+
+    constructor(renderer: DxfRenderer, firstCorner: { x: number; y: number }) {
+        super(renderer);
+        this.firstCorner = firstCorner;
+    }
+
+    update(point: { x: number; y: number }): void {
+        if ('updateRectangleRubberBand' in this.renderer) {
+            (this.renderer as any).updateRectangleRubberBand(this.firstCorner, point);
+        }
+    }
+
+    clear(): void {
+        if ('clearRubberBand' in this.renderer) {
+            (this.renderer as any).clearRubberBand();
+        }
+    }
+}

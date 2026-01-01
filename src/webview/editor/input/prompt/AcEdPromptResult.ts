@@ -44,3 +44,13 @@ export interface AcEdPromptStringResult {
     value?: string;
     keyword?: string;
 }
+
+/**
+ * Result of an entity selection prompt
+ */
+export interface AcEdPromptSelectionResult {
+    status: PromptStatus;
+    /** Array of selected THREE.Object3D entities */
+    value?: any[];
+    keyword?: string;
+}

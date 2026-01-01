@@ -12,9 +12,7 @@
  *   Ttr - Tangent, tangent, radius (not implemented)
  */
 
-import { AcEdCommand, EditorContext } from '../editor/command/AcEdCommand';
-import { AcEditor } from '../editor/AcEditor';
-import { AcEdPromptPointOptions, AcEdKeyword } from '../editor/input/prompt/AcEdPromptOptions';
+import { AcEdCommand, EditorContext, AcEditorInterface } from '../editor/command/AcEdCommand';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { CircleJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D, distance } from '../editor/input/handler/AcEdPointHandler';
@@ -22,7 +20,6 @@ import { Point2D, distance } from '../editor/input/handler/AcEdPointHandler';
 type CircleMode = 'center-radius' | '2p' | '3p';
 
 export class AcCircleCmd extends AcEdCommand {
-    private editor: AcEditor | null = null;
     private mode: CircleMode = 'center-radius';
 
     constructor() {
@@ -33,7 +30,7 @@ export class AcCircleCmd extends AcEdCommand {
     }
 
     async execute(context: EditorContext): Promise<void> {
-        this.editor = new AcEditor(context.renderer, context.commandLine);
+        const editor = context.editor;
 
         context.commandLine.print('CIRCLE', 'command');
 
@@ -43,7 +40,7 @@ export class AcCircleCmd extends AcEdCommand {
             this.checkCancelled();
 
             // Get center point with mode options
-            const centerResult = await this.editor.getPoint({
+            const centerResult = await editor.getPoint({
                 message: 'Specify center point for circle',
                 keywords: [
                     { displayName: '3P', globalName: '3P' },
@@ -59,10 +56,10 @@ export class AcCircleCmd extends AcEdCommand {
             if (centerResult.status === PromptStatus.Keyword) {
                 switch (centerResult.keyword) {
                     case '3P':
-                        await this.draw3PointCircle(context);
+                        await this.draw3PointCircle(context, editor);
                         continue;
                     case '2P':
-                        await this.draw2PointCircle(context);
+                        await this.draw2PointCircle(context, editor);
                         continue;
                     case 'TTR':
                         context.commandLine.print('TTR mode not yet implemented', 'error');
@@ -75,7 +72,7 @@ export class AcCircleCmd extends AcEdCommand {
             }
 
             // Draw center-radius circle
-            await this.drawCenterRadiusCircle(context, centerResult.value);
+            await this.drawCenterRadiusCircle(context, editor, centerResult.value);
         }
 
         context.renderer.cancelDrawing();
@@ -84,13 +81,11 @@ export class AcCircleCmd extends AcEdCommand {
     /**
      * Draws circle by center point and radius
      */
-    private async drawCenterRadiusCircle(context: EditorContext, center: Point2D): Promise<void> {
-        if (!this.editor) return;
-
+    private async drawCenterRadiusCircle(context: EditorContext, editor: AcEditorInterface, center: Point2D): Promise<void> {
         context.renderer.addDrawingPoint(center.x, center.y);
         const jig = new CircleJig(context.renderer, center);
 
-        const radiusResult = await this.editor.getDistance({
+        const radiusResult = await editor.getDistance({
             message: 'Specify radius',
             basePoint: center,
             jig,
@@ -103,7 +98,7 @@ export class AcCircleCmd extends AcEdCommand {
 
         if (radiusResult.status === PromptStatus.Keyword && radiusResult.keyword === 'DIAMETER') {
             // Switch to diameter mode
-            const diameterResult = await this.editor.getDistance({
+            const diameterResult = await editor.getDistance({
                 message: 'Specify diameter',
                 basePoint: center
             });
@@ -122,13 +117,11 @@ export class AcCircleCmd extends AcEdCommand {
     /**
      * Draws circle through 2 points (diameter endpoints)
      */
-    private async draw2PointCircle(context: EditorContext): Promise<void> {
-        if (!this.editor) return;
-
+    private async draw2PointCircle(context: EditorContext, editor: AcEditorInterface): Promise<void> {
         context.commandLine.print('2P', 'response');
 
         // First point
-        const p1Result = await this.editor.getPoint({
+        const p1Result = await editor.getPoint({
             message: 'Specify first end point of circle\'s diameter'
         });
 
@@ -140,7 +133,7 @@ export class AcCircleCmd extends AcEdCommand {
         context.renderer.addDrawingPoint(p1.x, p1.y);
 
         // Second point
-        const p2Result = await this.editor.getPoint({
+        const p2Result = await editor.getPoint({
             message: 'Specify second end point of circle\'s diameter',
             basePoint: p1
         });
@@ -168,13 +161,11 @@ export class AcCircleCmd extends AcEdCommand {
     /**
      * Draws circle through 3 points
      */
-    private async draw3PointCircle(context: EditorContext): Promise<void> {
-        if (!this.editor) return;
-
+    private async draw3PointCircle(context: EditorContext, editor: AcEditorInterface): Promise<void> {
         context.commandLine.print('3P', 'response');
 
         // First point
-        const p1Result = await this.editor.getPoint({
+        const p1Result = await editor.getPoint({
             message: 'Specify first point on circle'
         });
 
@@ -186,7 +177,7 @@ export class AcCircleCmd extends AcEdCommand {
         context.renderer.addDrawingPoint(p1.x, p1.y);
 
         // Second point
-        const p2Result = await this.editor.getPoint({
+        const p2Result = await editor.getPoint({
             message: 'Specify second point on circle',
             basePoint: p1
         });
@@ -199,7 +190,7 @@ export class AcCircleCmd extends AcEdCommand {
         context.renderer.addDrawingPoint(p2.x, p2.y);
 
         // Third point
-        const p3Result = await this.editor.getPoint({
+        const p3Result = await editor.getPoint({
             message: 'Specify third point on circle',
             basePoint: p2
         });
