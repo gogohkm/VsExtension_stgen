@@ -189,11 +189,14 @@ export class DxfRenderer {
     private viewCenter = { x: 0, y: 0 };
     private viewWidth = 100;
 
-    // Box zoom state
-    private isBoxZooming = false;
-    private boxZoomStart = { x: 0, y: 0 };
-    private boxZoomEnd = { x: 0, y: 0 };
+    // Box selection state (Window/Crossing selection)
+    private isBoxSelecting = false;
+    private boxSelectStart = { x: 0, y: 0 };
+    private boxSelectEnd = { x: 0, y: 0 };
     private selectionBox: HTMLDivElement | null = null;
+
+    // Box zoom state (Shift+drag)
+    private isBoxZooming = false;
 
     // Selection and hover state
     private raycaster: THREE.Raycaster;
@@ -300,16 +303,32 @@ export class DxfRenderer {
         if (!this.selectionBox) return;
 
         const rect = this.container.getBoundingClientRect();
-        const left = Math.min(this.boxZoomStart.x, this.boxZoomEnd.x) - rect.left;
-        const top = Math.min(this.boxZoomStart.y, this.boxZoomEnd.y) - rect.top;
-        const width = Math.abs(this.boxZoomEnd.x - this.boxZoomStart.x);
-        const height = Math.abs(this.boxZoomEnd.y - this.boxZoomStart.y);
+        const startX = this.isBoxSelecting ? this.boxSelectStart.x : this.boxSelectStart.x;
+        const startY = this.isBoxSelecting ? this.boxSelectStart.y : this.boxSelectStart.y;
+        const endX = this.isBoxSelecting ? this.boxSelectEnd.x : this.boxSelectEnd.x;
+        const endY = this.isBoxSelecting ? this.boxSelectEnd.y : this.boxSelectEnd.y;
+
+        const left = Math.min(startX, endX) - rect.left;
+        const top = Math.min(startY, endY) - rect.top;
+        const width = Math.abs(endX - startX);
+        const height = Math.abs(endY - startY);
 
         this.selectionBox.style.left = `${left}px`;
         this.selectionBox.style.top = `${top}px`;
         this.selectionBox.style.width = `${width}px`;
         this.selectionBox.style.height = `${height}px`;
         this.selectionBox.classList.add('visible');
+
+        // Window selection: drag left-to-right (solid blue box)
+        // Crossing selection: drag right-to-left (dashed green box)
+        if (this.isBoxSelecting) {
+            const isWindowSelection = endX > startX;
+            this.selectionBox.classList.toggle('window', isWindowSelection);
+            this.selectionBox.classList.toggle('crossing', !isWindowSelection);
+        } else {
+            // Box zoom mode
+            this.selectionBox.classList.remove('window', 'crossing');
+        }
     }
 
     private hideSelectionBox(): void {
@@ -331,15 +350,21 @@ export class DxfRenderer {
 
         canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) {
-                // Left button: Shift+drag = box zoom, otherwise no pan (selection only)
+                // Left button
                 if (e.shiftKey) {
+                    // Shift+drag = box zoom
                     this.isBoxZooming = true;
-                    this.boxZoomStart = { x: e.clientX, y: e.clientY };
-                    this.boxZoomEnd = { x: e.clientX, y: e.clientY };
+                    this.boxSelectStart = { x: e.clientX, y: e.clientY };
+                    this.boxSelectEnd = { x: e.clientX, y: e.clientY };
                     this.container.classList.add('selecting');
                     this.updateSelectionBox();
+                } else {
+                    // Normal drag = box selection (window/crossing)
+                    this.isBoxSelecting = true;
+                    this.boxSelectStart = { x: e.clientX, y: e.clientY };
+                    this.boxSelectEnd = { x: e.clientX, y: e.clientY };
+                    // Don't show box yet - wait for drag to avoid flicker on click
                 }
-                // Left button without shift: no pan, just allow click selection
             } else if (e.button === 1) {
                 // Middle button (wheel) = pan
                 this.isDragging = true;
@@ -352,8 +377,18 @@ export class DxfRenderer {
         canvas.addEventListener('mousemove', (e) => {
             if (this.isBoxZooming) {
                 // Update box zoom selection
-                this.boxZoomEnd = { x: e.clientX, y: e.clientY };
+                this.boxSelectEnd = { x: e.clientX, y: e.clientY };
                 this.updateSelectionBox();
+            } else if (this.isBoxSelecting) {
+                // Update box selection
+                this.boxSelectEnd = { x: e.clientX, y: e.clientY };
+                const dx = Math.abs(this.boxSelectEnd.x - this.boxSelectStart.x);
+                const dy = Math.abs(this.boxSelectEnd.y - this.boxSelectStart.y);
+                // Show selection box only after dragging a minimum distance
+                if (dx > 5 || dy > 5) {
+                    this.container.classList.add('selecting');
+                    this.updateSelectionBox();
+                }
             } else if (this.isDragging) {
                 const dx = e.clientX - this.lastMousePos.x;
                 const dy = e.clientY - this.lastMousePos.y;
@@ -382,10 +417,26 @@ export class DxfRenderer {
                 this.hideSelectionBox();
 
                 // Perform box zoom if selection is large enough
-                const dx = Math.abs(this.boxZoomEnd.x - this.boxZoomStart.x);
-                const dy = Math.abs(this.boxZoomEnd.y - this.boxZoomStart.y);
+                const dx = Math.abs(this.boxSelectEnd.x - this.boxSelectStart.x);
+                const dy = Math.abs(this.boxSelectEnd.y - this.boxSelectStart.y);
                 if (dx > 10 && dy > 10) {
                     this.zoomToBox();
+                }
+            } else if (this.isBoxSelecting) {
+                this.isBoxSelecting = false;
+                this.container.classList.remove('selecting');
+                this.hideSelectionBox();
+
+                // Perform box selection if dragged enough
+                const dx = Math.abs(this.boxSelectEnd.x - this.boxSelectStart.x);
+                const dy = Math.abs(this.boxSelectEnd.y - this.boxSelectStart.y);
+                if (dx > 5 || dy > 5) {
+                    // Box selection - determine window or crossing based on direction
+                    const isWindowSelection = this.boxSelectEnd.x > this.boxSelectStart.x;
+                    this.selectByBox(isWindowSelection, e.ctrlKey || e.metaKey);
+                } else {
+                    // Click selection (not a drag)
+                    this.handleClick(e);
                 }
             } else if (!this.isDragging) {
                 // Handle click for selection
@@ -398,8 +449,9 @@ export class DxfRenderer {
         canvas.addEventListener('mouseleave', () => {
             this.isDragging = false;
             this.container.classList.remove('panning');
-            if (this.isBoxZooming) {
+            if (this.isBoxZooming || this.isBoxSelecting) {
                 this.isBoxZooming = false;
+                this.isBoxSelecting = false;
                 this.container.classList.remove('selecting');
                 this.hideSelectionBox();
             }
@@ -1707,10 +1759,10 @@ export class DxfRenderer {
         const rect = this.container.getBoundingClientRect();
 
         // Convert screen coordinates to normalized device coordinates
-        const startX = (Math.min(this.boxZoomStart.x, this.boxZoomEnd.x) - rect.left) / rect.width;
-        const startY = (Math.min(this.boxZoomStart.y, this.boxZoomEnd.y) - rect.top) / rect.height;
-        const endX = (Math.max(this.boxZoomStart.x, this.boxZoomEnd.x) - rect.left) / rect.width;
-        const endY = (Math.max(this.boxZoomStart.y, this.boxZoomEnd.y) - rect.top) / rect.height;
+        const startX = (Math.min(this.boxSelectStart.x, this.boxSelectEnd.x) - rect.left) / rect.width;
+        const startY = (Math.min(this.boxSelectStart.y, this.boxSelectEnd.y) - rect.top) / rect.height;
+        const endX = (Math.max(this.boxSelectStart.x, this.boxSelectEnd.x) - rect.left) / rect.width;
+        const endY = (Math.max(this.boxSelectStart.y, this.boxSelectEnd.y) - rect.top) / rect.height;
 
         // Convert to world coordinates
         const aspect = this.container.clientWidth / this.container.clientHeight;
@@ -1732,6 +1784,191 @@ export class DxfRenderer {
 
         this.updateCamera();
         this.render();
+    }
+
+    // ========== Box Selection (Window/Crossing) ==========
+
+    /**
+     * Select entities by box
+     * @param isWindowSelection true for window (must be fully inside), false for crossing (any overlap)
+     * @param addToSelection true to add to current selection (Ctrl key)
+     */
+    private selectByBox(isWindowSelection: boolean, addToSelection: boolean): void {
+        const rect = this.container.getBoundingClientRect();
+
+        // Convert screen coordinates to world coordinates
+        const aspect = this.container.clientWidth / this.container.clientHeight;
+        const halfWidth = this.viewWidth / 2;
+        const halfHeight = halfWidth / aspect;
+
+        // Calculate world box coordinates
+        const screenStartX = (this.boxSelectStart.x - rect.left) / rect.width;
+        const screenStartY = (this.boxSelectStart.y - rect.top) / rect.height;
+        const screenEndX = (this.boxSelectEnd.x - rect.left) / rect.width;
+        const screenEndY = (this.boxSelectEnd.y - rect.top) / rect.height;
+
+        const worldX1 = this.viewCenter.x - halfWidth + screenStartX * this.viewWidth;
+        const worldY1 = this.viewCenter.y + halfHeight - screenStartY * (this.viewWidth / aspect);
+        const worldX2 = this.viewCenter.x - halfWidth + screenEndX * this.viewWidth;
+        const worldY2 = this.viewCenter.y + halfHeight - screenEndY * (this.viewWidth / aspect);
+
+        const boxMinX = Math.min(worldX1, worldX2);
+        const boxMaxX = Math.max(worldX1, worldX2);
+        const boxMinY = Math.min(worldY1, worldY2);
+        const boxMaxY = Math.max(worldY1, worldY2);
+
+        // Clear selection if not adding
+        if (!addToSelection) {
+            this.clearSelection();
+        }
+
+        // Check each entity
+        for (const object of this.entityGroup.children) {
+            const entity = object.userData.entity as DxfEntity;
+            if (!entity) continue;
+
+            const entityBounds = this.getEntityBounds(entity);
+            if (!entityBounds) continue;
+
+            let shouldSelect = false;
+
+            if (isWindowSelection) {
+                // Window selection: entity must be fully inside the box
+                shouldSelect = (
+                    entityBounds.minX >= boxMinX &&
+                    entityBounds.maxX <= boxMaxX &&
+                    entityBounds.minY >= boxMinY &&
+                    entityBounds.maxY <= boxMaxY
+                );
+            } else {
+                // Crossing selection: entity must overlap with the box
+                shouldSelect = !(
+                    entityBounds.maxX < boxMinX ||
+                    entityBounds.minX > boxMaxX ||
+                    entityBounds.maxY < boxMinY ||
+                    entityBounds.minY > boxMaxY
+                );
+            }
+
+            if (shouldSelect) {
+                this.selectEntity(object);
+            }
+        }
+
+        this.updateSelectionStatus();
+        this.render();
+    }
+
+    /**
+     * Get bounding box of an entity
+     */
+    private getEntityBounds(entity: DxfEntity): { minX: number; maxX: number; minY: number; maxY: number } | null {
+        switch (entity.type) {
+            case 'LINE': {
+                const line = entity as DxfLine;
+                return {
+                    minX: Math.min(line.start.x, line.end.x),
+                    maxX: Math.max(line.start.x, line.end.x),
+                    minY: Math.min(line.start.y, line.end.y),
+                    maxY: Math.max(line.start.y, line.end.y)
+                };
+            }
+            case 'CIRCLE': {
+                const circle = entity as DxfCircle;
+                return {
+                    minX: circle.center.x - circle.radius,
+                    maxX: circle.center.x + circle.radius,
+                    minY: circle.center.y - circle.radius,
+                    maxY: circle.center.y + circle.radius
+                };
+            }
+            case 'ARC': {
+                const arc = entity as DxfArc;
+                // Simplified: use circle bounds
+                return {
+                    minX: arc.center.x - arc.radius,
+                    maxX: arc.center.x + arc.radius,
+                    minY: arc.center.y - arc.radius,
+                    maxY: arc.center.y + arc.radius
+                };
+            }
+            case 'POINT': {
+                const point = entity as DxfPoint_;
+                return {
+                    minX: point.position.x,
+                    maxX: point.position.x,
+                    minY: point.position.y,
+                    maxY: point.position.y
+                };
+            }
+            case 'LWPOLYLINE':
+            case 'POLYLINE': {
+                const polyline = entity as any;
+                if (!polyline.vertices || polyline.vertices.length === 0) return null;
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                for (const v of polyline.vertices) {
+                    minX = Math.min(minX, v.x);
+                    maxX = Math.max(maxX, v.x);
+                    minY = Math.min(minY, v.y);
+                    maxY = Math.max(maxY, v.y);
+                }
+                return { minX, maxX, minY, maxY };
+            }
+            case 'TEXT':
+            case 'MTEXT': {
+                const text = entity as any;
+                const pos = text.position || text.insertionPoint;
+                if (!pos) return null;
+                // Estimate text bounds (rough)
+                const height = text.height || 1;
+                const width = (text.text?.length || 1) * height * 0.6;
+                return {
+                    minX: pos.x,
+                    maxX: pos.x + width,
+                    minY: pos.y,
+                    maxY: pos.y + height
+                };
+            }
+            case 'ELLIPSE': {
+                const ellipse = entity as any;
+                if (!ellipse.center) return null;
+                // Simplified: use major axis as radius
+                const majorAxis = ellipse.majorAxis || { x: 1, y: 0 };
+                const radius = Math.sqrt(majorAxis.x * majorAxis.x + majorAxis.y * majorAxis.y);
+                return {
+                    minX: ellipse.center.x - radius,
+                    maxX: ellipse.center.x + radius,
+                    minY: ellipse.center.y - radius,
+                    maxY: ellipse.center.y + radius
+                };
+            }
+            case 'SPLINE': {
+                const spline = entity as any;
+                const points = spline.controlPoints || spline.fitPoints;
+                if (!points || points.length === 0) return null;
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                for (const p of points) {
+                    minX = Math.min(minX, p.x);
+                    maxX = Math.max(maxX, p.x);
+                    minY = Math.min(minY, p.y);
+                    maxY = Math.max(maxY, p.y);
+                }
+                return { minX, maxX, minY, maxY };
+            }
+            case 'INSERT': {
+                const insert = entity as any;
+                if (!insert.position) return null;
+                // Simplified: use insertion point with some extent
+                return {
+                    minX: insert.position.x - 10,
+                    maxX: insert.position.x + 10,
+                    minY: insert.position.y - 10,
+                    maxY: insert.position.y + 10
+                };
+            }
+            default:
+                return null;
+        }
     }
 
     // ========== Hover and Selection ==========
