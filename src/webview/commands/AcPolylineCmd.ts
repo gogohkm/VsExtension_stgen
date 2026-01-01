@@ -14,9 +14,11 @@ import { AcEdKeyword } from '../editor/input/prompt/AcEdPromptOptions';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { LineJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D } from '../editor/input/handler/AcEdPointHandler';
+import * as THREE from 'three';
 
 export class AcPolylineCmd extends AcEdCommand {
     private points: Point2D[] = [];
+    private createdEntities: THREE.Object3D[] = [];  // Track created entities for undo
 
     constructor() {
         super();
@@ -28,6 +30,7 @@ export class AcPolylineCmd extends AcEdCommand {
     async execute(context: EditorContext): Promise<void> {
         const editor = context.editor;
         this.points = [];
+        this.createdEntities = [];  // Reset tracking for new command execution
 
         context.commandLine.print('PLINE', 'command');
 
@@ -73,8 +76,11 @@ export class AcPolylineCmd extends AcEdCommand {
             switch (nextPointResult.status) {
                 case PromptStatus.OK:
                     if (nextPointResult.value) {
-                        // Create line segment
-                        context.renderer.createLineFromPoints(lastPoint, nextPointResult.value);
+                        // Create line segment and track the Three.js object for undo
+                        const result = context.renderer.createLineFromPointsWithObject(lastPoint, nextPointResult.value);
+                        if (result) {
+                            this.createdEntities.push(result.object);
+                        }
                         this.points.push(nextPointResult.value);
                         context.commandLine.print(
                             `To point: ${nextPointResult.value.x.toFixed(4)}, ${nextPointResult.value.y.toFixed(4)}`,
@@ -88,7 +94,10 @@ export class AcPolylineCmd extends AcEdCommand {
                         case 'CLOSE':
                             if (this.points.length >= 2) {
                                 const firstPoint = this.points[0];
-                                context.renderer.createLineFromPoints(lastPoint, firstPoint);
+                                const result = context.renderer.createLineFromPointsWithObject(lastPoint, firstPoint);
+                                if (result) {
+                                    this.createdEntities.push(result.object);
+                                }
                                 context.commandLine.print('Close', 'response');
                                 continueDrawing = false;
                             }
@@ -97,6 +106,11 @@ export class AcPolylineCmd extends AcEdCommand {
                         case 'UNDO':
                             if (this.points.length > 1) {
                                 this.points.pop();
+                                // Remove the specific line created by this command
+                                const lastCreated = this.createdEntities.pop();
+                                if (lastCreated) {
+                                    context.renderer.deleteEntity(lastCreated);
+                                }
                                 context.commandLine.print('Undo', 'response');
                             } else if (this.points.length === 1) {
                                 this.points.pop();

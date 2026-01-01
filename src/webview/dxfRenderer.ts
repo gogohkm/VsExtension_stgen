@@ -303,10 +303,10 @@ export class DxfRenderer {
         if (!this.selectionBox) return;
 
         const rect = this.container.getBoundingClientRect();
-        const startX = this.isBoxSelecting ? this.boxSelectStart.x : this.boxSelectStart.x;
-        const startY = this.isBoxSelecting ? this.boxSelectStart.y : this.boxSelectStart.y;
-        const endX = this.isBoxSelecting ? this.boxSelectEnd.x : this.boxSelectEnd.x;
-        const endY = this.isBoxSelecting ? this.boxSelectEnd.y : this.boxSelectEnd.y;
+        const startX = this.boxSelectStart.x;
+        const startY = this.boxSelectStart.y;
+        const endX = this.boxSelectEnd.x;
+        const endY = this.boxSelectEnd.y;
 
         const left = Math.min(startX, endX) - rect.left;
         const top = Math.min(startY, endY) - rect.top;
@@ -3032,7 +3032,7 @@ export class DxfRenderer {
         this.render();
     }
 
-    private clearRubberBand(): void {
+    clearRubberBand(): void {
         if (this.rubberBandLine) {
             this.drawingGroup.remove(this.rubberBandLine);
             this.rubberBandLine.geometry.dispose();
@@ -3048,8 +3048,11 @@ export class DxfRenderer {
         }
     }
 
-    private generateHandle(): string {
-        // Generate a unique handle for new entities
+    /**
+     * Generate a unique handle for new entities
+     * Made public for use by commands like COPY
+     */
+    generateHandle(): string {
         const timestamp = Date.now().toString(16).toUpperCase();
         const random = Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
         return `NEW_${timestamp}${random}`;
@@ -3068,8 +3071,20 @@ export class DxfRenderer {
         this.drawingPoints.push({ x, y });
     }
 
-    // Create a line from two points (for command line input)
+    /**
+     * Create a line from two points (for command line input)
+     * Returns the created entity and Three.js object for undo tracking
+     */
     createLineFromPoints(start: { x: number; y: number }, end: { x: number; y: number }): DxfLine | null {
+        const result = this.createLineFromPointsWithObject(start, end);
+        return result ? result.entity : null;
+    }
+
+    /**
+     * Create a line from two points and return both entity and Three.js object
+     * Used by LINE/PLINE commands for undo tracking
+     */
+    createLineFromPointsWithObject(start: { x: number; y: number }, end: { x: number; y: number }): { entity: DxfLine; object: THREE.Object3D } | null {
         // Create DXF LINE entity
         const lineEntity: DxfLine = {
             type: 'LINE',
@@ -3100,7 +3115,7 @@ export class DxfRenderer {
             this.onDrawingComplete(lineEntity);
         }
 
-        return lineEntity;
+        return { entity: lineEntity, object: lineObject };
     }
 
     // Create a circle from center and radius (for command line input)
@@ -3298,6 +3313,23 @@ export class DxfRenderer {
     }
 
     /**
+     * Remove the last entity from the entity group
+     * Used for Undo functionality in drawing commands
+     * Returns true if an entity was removed, false otherwise
+     */
+    undoLastEntity(): boolean {
+        if (this.entityGroup.children.length === 0) {
+            return false;
+        }
+
+        // Get the last added entity
+        const lastObject = this.entityGroup.children[this.entityGroup.children.length - 1];
+
+        // Delete it
+        return this.deleteEntity(lastObject);
+    }
+
+    /**
      * Re-renders all entities in the entity group.
      * Used after entity data has been modified (e.g., by MOVE or COPY commands).
      */
@@ -3358,7 +3390,32 @@ export class DxfRenderer {
             this.entityGroup.add(object);
         }
 
+        this.render();
         return cloned;
+    }
+
+    /**
+     * Add a pre-configured entity to the DXF and render it
+     * Used by COPY command after displacement is applied
+     * @param entity The entity with coordinates already set to final position
+     * @returns The Three.js object created for the entity
+     */
+    addEntity(entity: DxfEntity): THREE.Object3D | null {
+        if (!this.parsedDxf) return null;
+
+        // Add to parsed DXF data
+        this.parsedDxf.entities.push(entity);
+
+        // Render the entity at its current coordinates
+        const object = this.renderEntity(entity, this.parsedDxf);
+        if (object) {
+            object.userData.entity = entity;
+            object.userData.layer = entity.layer;
+            this.entityGroup.add(object);
+        }
+
+        this.render();
+        return object;
     }
 
     /**

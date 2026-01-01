@@ -250,28 +250,13 @@ export class AcDimCmd extends AcEdCommand {
         // Format the measurement text
         const textContent = geom.measurement.toFixed(2);
 
-        // For now, we'll create a simple text representation
-        // In a full implementation, we would use MTEXT or TEXT entity
-        // Since createText might not be available, we'll use a simple approach
-
-        // Create a small marker at text position for now
-        // This would ideally be replaced with proper text rendering
-        const textSize = DIM_TEXT_HEIGHT;
-        const halfWidth = textContent.length * textSize * 0.3;
-
-        // Create a simple box around where text would be
-        // This is a placeholder - ideally we'd render actual text
-        if ((context.renderer as any).createTextEntity) {
-            (context.renderer as any).createTextEntity(
-                geom.textPosition,
-                textContent,
-                textSize,
-                geom.textAngle
-            );
-        } else {
-            // Fallback: just log the dimension value
-            context.commandLine.print(`Dimension value: ${textContent}`, 'response');
-        }
+        // Create text entity for dimension annotation
+        context.renderer.createTextEntity(
+            geom.textPosition,
+            textContent,
+            DIM_TEXT_HEIGHT,
+            geom.textAngle
+        );
     }
 }
 

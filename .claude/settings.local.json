@@ -10,7 +10,8 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(npm run watch:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(xargs basename:*)"
     ]
   }
 }

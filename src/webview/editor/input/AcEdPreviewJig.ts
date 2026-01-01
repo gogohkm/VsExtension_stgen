@@ -63,16 +63,11 @@ export class LineJig extends AcEdPreviewJig {
     }
 
     update(point: { x: number; y: number }): void {
-        // Use renderer's existing rubber band functionality
-        if ('updateLineRubberBandFromPoints' in this.renderer) {
-            (this.renderer as any).updateLineRubberBandFromPoints(this.startPoint, point);
-        }
+        this.renderer.updateLineRubberBandFromPoints(this.startPoint, point);
     }
 
     clear(): void {
-        if ('clearRubberBand' in this.renderer) {
-            (this.renderer as any).clearRubberBand();
-        }
+        this.renderer.clearRubberBand();
     }
 
     setStartPoint(point: { x: number; y: number }): void {
@@ -103,15 +98,11 @@ export class CircleJig extends AcEdPreviewJig {
             );
         }
 
-        if ('updateCircleRubberBandFromCenterRadius' in this.renderer) {
-            (this.renderer as any).updateCircleRubberBandFromCenterRadius(this.center, radius);
-        }
+        this.renderer.updateCircleRubberBandFromCenterRadius(this.center, radius);
     }
 
     clear(): void {
-        if ('clearRubberBand' in this.renderer) {
-            (this.renderer as any).clearRubberBand();
-        }
+        this.renderer.clearRubberBand();
     }
 }
 
@@ -127,14 +118,10 @@ export class RectangleJig extends AcEdPreviewJig {
     }
 
     update(point: { x: number; y: number }): void {
-        if ('updateRectangleRubberBand' in this.renderer) {
-            (this.renderer as any).updateRectangleRubberBand(this.firstCorner, point);
-        }
+        this.renderer.updateRectangleRubberBand(this.firstCorner, point);
     }
 
     clear(): void {
-        if ('clearRubberBand' in this.renderer) {
-            (this.renderer as any).clearRubberBand();
-        }
+        this.renderer.clearRubberBand();
     }
 }

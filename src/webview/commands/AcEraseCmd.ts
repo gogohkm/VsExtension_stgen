@@ -34,19 +34,13 @@ export class AcEraseCmd extends AcEdCommand {
         }
 
         // No pre-selection, prompt for selection
-        context.commandLine.print('Select objects to erase:', 'prompt');
-        context.commandLine.print('Click on objects to select, then press Enter', 'response');
-
-        // Wait for user to press Enter (this is a simplified version)
-        // In a full implementation, we would track selection state
         const editor = context.editor;
 
-        const result = await editor.getPoint({
-            message: 'Select objects (Enter when done)',
-            allowNone: true
+        const result = await editor.getSelection({
+            message: 'Select objects (Enter when done)'
         });
 
-        if (result.status === PromptStatus.None || result.status === PromptStatus.Cancel) {
+        if (result.status === PromptStatus.OK || result.status === PromptStatus.None) {
             const count = context.renderer.deleteSelectedEntities();
             if (count > 0) {
                 context.commandLine.print(
@@ -56,6 +50,8 @@ export class AcEraseCmd extends AcEdCommand {
             } else {
                 context.commandLine.print('No objects selected', 'response');
             }
+        } else if (result.status === PromptStatus.Cancel) {
+            context.commandLine.print('*Cancel*', 'error');
         }
     }
 }

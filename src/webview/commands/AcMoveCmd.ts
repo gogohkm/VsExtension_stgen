@@ -80,6 +80,7 @@ export class AcMoveCmd extends AcEdCommand {
 
     /**
      * Moves all selected entities by the given displacement
+     * Fixed: Update both entity data AND Three.js object positions
      */
     private moveSelectedEntities(context: EditorContext, dx: number, dy: number): number {
         const selectedObjects = context.renderer.getSelectedEntities();
@@ -89,14 +90,19 @@ export class AcMoveCmd extends AcEdCommand {
             const entity = object.userData.entity as DxfEntity;
             if (!entity) continue;
 
-            // Apply displacement based on entity type
+            // 1. Update entity data (for persistence/export)
             this.applyDisplacement(entity, dx, dy);
+
+            // 2. Update Three.js object position directly (for immediate visual update)
+            object.position.x += dx;
+            object.position.y += dy;
+
             count++;
         }
 
-        // Clear selection and re-render
+        // Clear selection and render (no need for full re-render)
         context.renderer.clearSelection();
-        context.renderer.reRenderEntities();
+        context.renderer.render();
 
         return count;
     }

@@ -298,10 +298,13 @@ export class AcEditor {
 
     /**
      * Sets up mouse move handler for jig
+     * Note: Mouse move events are connected externally via main.ts:
+     * main.ts mousemove -> AcEdCommandLineUI.handleMouseMove() -> AcEditor.handleMouseMove()
+     * The jig update happens in handleMouseMove() method above
      */
-    private setupMouseMoveHandler(options: any): void {
-        // This will be connected to renderer's mouse move event
-        // The renderer will call handleMouseMove
+    private setupMouseMoveHandler(_options: any): void {
+        // No setup needed - mouse events flow from main.ts through AcEdCommandLineUI
+        // to this.handleMouseMove() which updates the jig
     }
 
     /**
