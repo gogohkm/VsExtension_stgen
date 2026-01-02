@@ -438,6 +438,11 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 <button id="btn-layers-close" title="Close">&times;</button>
             </div>
         </div>
+        <div class="layer-current-row">
+            <span class="layer-current-label">Current:</span>
+            <select id="layer-current-select" title="Set Current Drawing Layer"></select>
+            <button id="btn-layer-add" title="Add New Layer">+</button>
+        </div>
         <div id="layer-list"></div>
     </div>
     <div id="properties-panel">
@@ -449,36 +454,77 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
             <div class="no-selection">No entity selected</div>
         </div>
     </div>
+    <div id="snap-panel">
+        <div class="snap-panel-header">
+            <h4>Snap Settings</h4>
+            <button id="btn-snap-close" title="Close">&times;</button>
+        </div>
+        <div id="snap-types-list">
+            <label class="snap-type-item"><input type="checkbox" data-snap="endpoint" checked> Endpoint</label>
+            <label class="snap-type-item"><input type="checkbox" data-snap="midpoint" checked> Midpoint</label>
+            <label class="snap-type-item"><input type="checkbox" data-snap="center" checked> Center</label>
+            <label class="snap-type-item"><input type="checkbox" data-snap="quadrant"> Quadrant</label>
+            <label class="snap-type-item"><input type="checkbox" data-snap="intersection"> Intersection</label>
+            <label class="snap-type-item"><input type="checkbox" data-snap="perpendicular"> Perpendicular</label>
+            <label class="snap-type-item"><input type="checkbox" data-snap="nearest"> Nearest</label>
+        </div>
+    </div>
     <div id="toolbar">
-        <div class="button-row">
-            <button id="btn-zoom-fit" title="Fit View (F)">Fit</button>
-            <button id="btn-zoom-in" title="Zoom In">+</button>
-            <button id="btn-zoom-out" title="Zoom Out">-</button>
+        <div class="toolbar-group">
+            <span class="toolbar-label">View</span>
+            <div class="button-row">
+                <button id="btn-zoom-fit" title="Fit View (F)">Fit</button>
+                <button id="btn-layers" title="Layer Manager">Layers</button>
+                <button id="btn-properties" title="Toggle Properties Panel">Props</button>
+            </div>
         </div>
         <span class="separator"></span>
-        <div class="button-row">
-            <button id="btn-layers" title="Toggle Layers Panel">Layers</button>
-            <button id="btn-properties" title="Toggle Properties Panel">Props</button>
-        </div>
-        <div class="button-row">
-            <button id="btn-snap" class="active" title="Toggle Snap (S)">Snap</button>
-            <button id="btn-ortho" title="Toggle Ortho Mode">Ortho</button>
-        </div>
-        <span class="separator"></span>
-        <div class="button-row">
-            <button id="btn-draw-line" title="Draw Line (L)">Line</button>
-            <button id="btn-draw-circle" title="Draw Circle (C)">Circle</button>
+        <div class="toolbar-group">
+            <span class="toolbar-label">Settings</span>
+            <div class="button-row">
+                <button id="btn-snap" class="active" title="Toggle Snap (S)">Snap</button>
+                <button id="btn-snap-settings" title="Snap Settings">⚙</button>
+                <button id="btn-ortho" title="Toggle Ortho Mode">Ortho</button>
+            </div>
         </div>
         <span class="separator"></span>
-        <div class="button-row">
-            <button id="btn-capture" title="Capture View">Capture</button>
-            <button id="btn-extract" title="Extract Entities">Extract</button>
+        <div class="toolbar-group">
+            <span class="toolbar-label">Draw</span>
+            <div class="button-row">
+                <button id="btn-draw-line" title="Draw Line (L)">Line</button>
+                <button id="btn-draw-circle" title="Draw Circle (C)">Circle</button>
+                <button id="btn-draw-rect" title="Draw Rectangle (REC)">Rect</button>
+            </div>
         </div>
         <span class="separator"></span>
-        <div class="button-row">
-            <button id="btn-clear-annotations" title="Clear Annotations">Clear</button>
-            <button id="btn-save-annotations" title="Save Annotations">Save</button>
-            <button id="btn-load-annotations" title="Load Annotations">Load</button>
+        <div class="toolbar-group">
+            <span class="toolbar-label">Dimension</span>
+            <div class="button-row">
+                <button id="btn-dim" title="Dimension (DLI)">Dim</button>
+                <button id="btn-dim-hor" title="Horizontal Dimension (DH)">DimH</button>
+                <button id="btn-dim-ver" title="Vertical Dimension (DV)">DimV</button>
+                <button id="btn-dim-aligned" title="Aligned Dimension (DAL)">DimA</button>
+                <button id="btn-dim-angular" title="Angular Dimension (DAN)">Dim∠</button>
+            </div>
+        </div>
+        <span class="separator"></span>
+        <div class="toolbar-group">
+            <span class="toolbar-label">Export</span>
+            <div class="button-row">
+                <button id="btn-capture" title="Capture View as PNG">Capture</button>
+                <button id="btn-extract" title="Extract Entities as Text">Extract</button>
+            </div>
+        </div>
+        <span class="separator"></span>
+        <div class="toolbar-group">
+            <span class="toolbar-label">Annotation</span>
+            <div class="button-row">
+                <button id="btn-anno-text" title="Add Text Annotation">Text</button>
+                <button id="btn-anno-arrow" title="Add Arrow/Leader">Arrow</button>
+                <button id="btn-clear-annotations" title="Clear All Annotations">Clear</button>
+                <button id="btn-save-annotations" title="Save Annotations">Save</button>
+                <button id="btn-load-annotations" title="Load Annotations">Load</button>
+            </div>
         </div>
     </div>
     <div id="command-panel">

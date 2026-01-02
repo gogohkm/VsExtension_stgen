@@ -367,4 +367,16 @@ export class AcEdCommandLineUI implements CommandLineInterface {
     isCommandActive(): boolean {
         return this.activeCommand !== null;
     }
+
+    /**
+     * Executes a command by name (for toolbar buttons)
+     */
+    executeCommand(commandName: string): void {
+        if (this.activeCommand) {
+            this.print('Another command is active. Press ESC to cancel.', 'error');
+            return;
+        }
+        this.print(commandName, 'command');
+        this.parseAndExecute(commandName);
+    }
 }

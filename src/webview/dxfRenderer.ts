@@ -67,6 +67,7 @@ export enum SnapType {
     CENTER = 'center',
     QUADRANT = 'quadrant',
     INTERSECTION = 'intersection',
+    PERPENDICULAR = 'perpendicular',
     NEAREST = 'nearest'
 }
 
@@ -98,6 +99,7 @@ const SNAP_COLORS: Record<SnapType, number> = {
     [SnapType.CENTER]: 0xff00ff,      // Magenta
     [SnapType.QUADRANT]: 0xffff00,    // Yellow
     [SnapType.INTERSECTION]: 0xff0000, // Red
+    [SnapType.PERPENDICULAR]: 0x00ff7f, // Spring Green
     [SnapType.NEAREST]: 0xffa500      // Orange
 };
 
@@ -2455,11 +2457,16 @@ export class DxfRenderer {
         const snapPoints: SnapPoint[] = [];
         const snapRadiusWorld = this.screenToWorldDistance(this.snapRadius);
 
+        // Collect visible entities for intersection checking
+        const visibleEntities: { entity: DxfEntity; object: THREE.Object3D }[] = [];
+
         for (const object of this.entityGroup.children) {
             if (!object.visible) continue;
 
             const entity = object.userData.entity;
             if (!entity) continue;
+
+            visibleEntities.push({ entity, object });
 
             const points = this.getEntitySnapPoints(entity, object);
             for (const point of points) {
@@ -2473,6 +2480,20 @@ export class DxfRenderer {
                     snapPoints.push(point);
                 }
             }
+
+            // Add perpendicular snap points if enabled
+            if (this.activeSnapTypes.has(SnapType.PERPENDICULAR)) {
+                const perpPoint = this.getPerpendicularSnapPoint(entity, object, worldX, worldY, snapRadiusWorld);
+                if (perpPoint) {
+                    snapPoints.push(perpPoint);
+                }
+            }
+        }
+
+        // Add intersection snap points if enabled
+        if (this.activeSnapTypes.has(SnapType.INTERSECTION)) {
+            const intersections = this.findIntersectionSnapPoints(visibleEntities, worldX, worldY, snapRadiusWorld);
+            snapPoints.push(...intersections);
         }
 
         // Sort by distance
@@ -2489,6 +2510,233 @@ export class DxfRenderer {
         });
 
         return snapPoints;
+    }
+
+    // Get perpendicular snap point from cursor to a line entity
+    private getPerpendicularSnapPoint(
+        entity: DxfEntity,
+        object: THREE.Object3D,
+        worldX: number,
+        worldY: number,
+        snapRadius: number
+    ): SnapPoint | null {
+        if (entity.type !== 'LINE') return null;
+
+        const line = entity as DxfLine;
+        const { start, end } = line;
+
+        // Vector from start to end
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const lengthSq = dx * dx + dy * dy;
+
+        if (lengthSq === 0) return null;
+
+        // Project cursor point onto the line
+        const t = ((worldX - start.x) * dx + (worldY - start.y) * dy) / lengthSq;
+
+        // Only consider points on the line segment (not extensions)
+        if (t < 0 || t > 1) return null;
+
+        const perpX = start.x + t * dx;
+        const perpY = start.y + t * dy;
+
+        // Check if perpendicular point is within snap radius
+        const distToCursor = Math.sqrt(
+            Math.pow(perpX - worldX, 2) + Math.pow(perpY - worldY, 2)
+        );
+
+        if (distToCursor <= snapRadius) {
+            return {
+                type: SnapType.PERPENDICULAR,
+                position: { x: perpX, y: perpY },
+                entity: object
+            };
+        }
+
+        return null;
+    }
+
+    // Find intersection points between visible entities
+    private findIntersectionSnapPoints(
+        entities: { entity: DxfEntity; object: THREE.Object3D }[],
+        worldX: number,
+        worldY: number,
+        snapRadius: number
+    ): SnapPoint[] {
+        const intersections: SnapPoint[] = [];
+
+        // Check all pairs of entities
+        for (let i = 0; i < entities.length; i++) {
+            for (let j = i + 1; j < entities.length; j++) {
+                const e1 = entities[i];
+                const e2 = entities[j];
+
+                const points = this.findEntityIntersections(e1.entity, e2.entity, e1.object);
+                for (const point of points) {
+                    const dist = Math.sqrt(
+                        Math.pow(point.x - worldX, 2) + Math.pow(point.y - worldY, 2)
+                    );
+                    if (dist <= snapRadius) {
+                        intersections.push({
+                            type: SnapType.INTERSECTION,
+                            position: point,
+                            entity: e1.object
+                        });
+                    }
+                }
+            }
+        }
+
+        return intersections;
+    }
+
+    // Find intersection points between two entities
+    private findEntityIntersections(
+        e1: DxfEntity,
+        e2: DxfEntity,
+        object: THREE.Object3D
+    ): { x: number; y: number }[] {
+        const points: { x: number; y: number }[] = [];
+
+        // Line-Line intersection
+        if (e1.type === 'LINE' && e2.type === 'LINE') {
+            const line1 = e1 as DxfLine;
+            const line2 = e2 as DxfLine;
+            const intersection = this.lineLineIntersection(
+                line1.start, line1.end,
+                line2.start, line2.end
+            );
+            if (intersection) {
+                points.push(intersection);
+            }
+        }
+
+        // Line-Circle intersection
+        if (e1.type === 'LINE' && e2.type === 'CIRCLE') {
+            const line = e1 as DxfLine;
+            const circle = e2 as DxfCircle;
+            points.push(...this.lineCircleIntersection(line.start, line.end, circle.center, circle.radius));
+        } else if (e1.type === 'CIRCLE' && e2.type === 'LINE') {
+            const circle = e1 as DxfCircle;
+            const line = e2 as DxfLine;
+            points.push(...this.lineCircleIntersection(line.start, line.end, circle.center, circle.radius));
+        }
+
+        // Circle-Circle intersection
+        if (e1.type === 'CIRCLE' && e2.type === 'CIRCLE') {
+            const c1 = e1 as DxfCircle;
+            const c2 = e2 as DxfCircle;
+            points.push(...this.circleCircleIntersection(c1.center, c1.radius, c2.center, c2.radius));
+        }
+
+        return points;
+    }
+
+    // Line-line intersection calculation
+    private lineLineIntersection(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        p3: { x: number; y: number },
+        p4: { x: number; y: number }
+    ): { x: number; y: number } | null {
+        const d1x = p2.x - p1.x;
+        const d1y = p2.y - p1.y;
+        const d2x = p4.x - p3.x;
+        const d2y = p4.y - p3.y;
+
+        const cross = d1x * d2y - d1y * d2x;
+        if (Math.abs(cross) < 1e-10) return null; // Parallel lines
+
+        const dx = p3.x - p1.x;
+        const dy = p3.y - p1.y;
+
+        const t1 = (dx * d2y - dy * d2x) / cross;
+        const t2 = (dx * d1y - dy * d1x) / cross;
+
+        // Check if intersection is within both line segments
+        if (t1 >= 0 && t1 <= 1 && t2 >= 0 && t2 <= 1) {
+            return {
+                x: p1.x + t1 * d1x,
+                y: p1.y + t1 * d1y
+            };
+        }
+
+        return null;
+    }
+
+    // Line-circle intersection calculation
+    private lineCircleIntersection(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        center: { x: number; y: number },
+        radius: number
+    ): { x: number; y: number }[] {
+        const points: { x: number; y: number }[] = [];
+
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const fx = p1.x - center.x;
+        const fy = p1.y - center.y;
+
+        const a = dx * dx + dy * dy;
+        const b = 2 * (fx * dx + fy * dy);
+        const c = fx * fx + fy * fy - radius * radius;
+
+        const discriminant = b * b - 4 * a * c;
+        if (discriminant < 0) return points;
+
+        const sqrtDisc = Math.sqrt(discriminant);
+        const t1 = (-b - sqrtDisc) / (2 * a);
+        const t2 = (-b + sqrtDisc) / (2 * a);
+
+        if (t1 >= 0 && t1 <= 1) {
+            points.push({ x: p1.x + t1 * dx, y: p1.y + t1 * dy });
+        }
+        if (t2 >= 0 && t2 <= 1 && Math.abs(t2 - t1) > 1e-10) {
+            points.push({ x: p1.x + t2 * dx, y: p1.y + t2 * dy });
+        }
+
+        return points;
+    }
+
+    // Circle-circle intersection calculation
+    private circleCircleIntersection(
+        c1: { x: number; y: number },
+        r1: number,
+        c2: { x: number; y: number },
+        r2: number
+    ): { x: number; y: number }[] {
+        const points: { x: number; y: number }[] = [];
+
+        const dx = c2.x - c1.x;
+        const dy = c2.y - c1.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+
+        // No intersection cases
+        if (d > r1 + r2 || d < Math.abs(r1 - r2) || d === 0) {
+            return points;
+        }
+
+        const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+        const h = Math.sqrt(r1 * r1 - a * a);
+
+        const px = c1.x + a * dx / d;
+        const py = c1.y + a * dy / d;
+
+        points.push({
+            x: px + h * dy / d,
+            y: py - h * dx / d
+        });
+
+        if (Math.abs(h) > 1e-10) {
+            points.push({
+                x: px - h * dy / d,
+                y: py + h * dx / d
+            });
+        }
+
+        return points;
     }
 
     // Convert screen distance to world distance
@@ -3244,6 +3492,38 @@ export class DxfRenderer {
 
     setDrawingLayer(layerName: string): void {
         this.currentDrawingLayer = layerName;
+    }
+
+    getCurrentDrawingLayer(): string {
+        return this.currentDrawingLayer;
+    }
+
+    /**
+     * Adds a new layer to the drawing
+     * @param name Layer name
+     * @param color ACI color index (default: 7 = white)
+     * @returns true if layer was added, false if it already exists
+     */
+    addLayer(name: string, color: number = 7): boolean {
+        if (!this.parsedDxf) return false;
+
+        // Check if layer already exists
+        if (this.parsedDxf.layers.has(name)) {
+            return false;
+        }
+
+        // Add new layer
+        this.parsedDxf.layers.set(name, {
+            name,
+            color,
+            frozen: false,
+            off: false
+        });
+
+        // Set layer visibility
+        this.layerVisibility.set(name, true);
+
+        return true;
     }
 
     setDrawingColor(color: number): void {

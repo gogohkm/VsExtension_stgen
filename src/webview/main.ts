@@ -70,6 +70,7 @@ class DxfViewerApp {
         this.setupToolbarEvents();
         this.setupLayerPanel();
         this.setupPropertiesPanel();
+        this.setupSnapPanel();
 
         // Setup message handler
         window.addEventListener('message', (event) => {
@@ -567,6 +568,7 @@ class DxfViewerApp {
             [SnapType.CENTER]: 'Center',
             [SnapType.QUADRANT]: 'Quadrant',
             [SnapType.INTERSECTION]: 'Intersection',
+            [SnapType.PERPENDICULAR]: 'Perpendicular',
             [SnapType.NEAREST]: 'Nearest'
         };
 
@@ -697,16 +699,12 @@ class DxfViewerApp {
         });
 
         // Annotation tools
-        document.getElementById('btn-annotate-text')?.addEventListener('click', () => {
+        document.getElementById('btn-anno-text')?.addEventListener('click', () => {
             this.startAnnotation('text');
         });
 
-        document.getElementById('btn-annotate-arrow')?.addEventListener('click', () => {
+        document.getElementById('btn-anno-arrow')?.addEventListener('click', () => {
             this.startAnnotation('arrow');
-        });
-
-        document.getElementById('btn-annotate-rect')?.addEventListener('click', () => {
-            this.startAnnotation('rectangle');
         });
 
         document.getElementById('btn-clear-annotations')?.addEventListener('click', () => {
@@ -738,6 +736,11 @@ class DxfViewerApp {
             this.toggleSnap();
         });
 
+        // Snap settings panel toggle
+        document.getElementById('btn-snap-settings')?.addEventListener('click', () => {
+            this.toggleSnapPanel();
+        });
+
         // Ortho toggle
         document.getElementById('btn-ortho')?.addEventListener('click', () => {
             this.toggleOrtho();
@@ -750,6 +753,31 @@ class DxfViewerApp {
 
         document.getElementById('btn-draw-circle')?.addEventListener('click', () => {
             this.startDrawingCircle();
+        });
+
+        document.getElementById('btn-draw-rect')?.addEventListener('click', () => {
+            this.commandLine?.executeCommand('RECTANGLE');
+        });
+
+        // Dimension tools
+        document.getElementById('btn-dim')?.addEventListener('click', () => {
+            this.commandLine?.executeCommand('DIM');
+        });
+
+        document.getElementById('btn-dim-hor')?.addEventListener('click', () => {
+            this.commandLine?.executeCommand('DIMHOR');
+        });
+
+        document.getElementById('btn-dim-ver')?.addEventListener('click', () => {
+            this.commandLine?.executeCommand('DIMVER');
+        });
+
+        document.getElementById('btn-dim-aligned')?.addEventListener('click', () => {
+            this.commandLine?.executeCommand('DIMALIGNED');
+        });
+
+        document.getElementById('btn-dim-angular')?.addEventListener('click', () => {
+            this.commandLine?.executeCommand('DIMANGULAR');
         });
     }
 
@@ -899,6 +927,72 @@ class DxfViewerApp {
             this.renderer?.toggleAllLayers(false);
             this.updateLayerList();
         });
+
+        // Current layer dropdown change
+        document.getElementById('layer-current-select')?.addEventListener('change', (e) => {
+            const select = e.target as HTMLSelectElement;
+            const layerName = select.value;
+            if (this.renderer && layerName) {
+                this.renderer.setDrawingLayer(layerName);
+                this.commandLine?.print(`Current layer set to: ${layerName}`, 'success');
+            }
+        });
+
+        // Add new layer button
+        document.getElementById('btn-layer-add')?.addEventListener('click', () => {
+            this.showAddLayerDialog();
+        });
+    }
+
+    private showAddLayerDialog(): void {
+        // Create simple dialog for new layer name
+        const layerName = prompt('Enter new layer name:');
+        if (!layerName || !layerName.trim()) {
+            return;
+        }
+
+        const name = layerName.trim().toUpperCase();
+
+        if (!this.renderer) {
+            return;
+        }
+
+        // Add the layer
+        const added = this.renderer.addLayer(name);
+        if (added) {
+            // Set as current layer
+            this.renderer.setDrawingLayer(name);
+            // Update UI
+            this.updateLayerList();
+            this.updateCurrentLayerDropdown();
+            this.commandLine?.print(`Layer "${name}" created and set as current`, 'success');
+        } else {
+            // Layer already exists, just set as current
+            this.renderer.setDrawingLayer(name);
+            this.updateCurrentLayerDropdown();
+            this.commandLine?.print(`Layer "${name}" already exists, set as current`, 'response');
+        }
+    }
+
+    private updateCurrentLayerDropdown(): void {
+        const select = document.getElementById('layer-current-select') as HTMLSelectElement;
+        if (!select || !this.renderer) return;
+
+        const layers = this.renderer.getLayers();
+        const currentLayer = this.renderer.getCurrentDrawingLayer();
+
+        // Clear and rebuild options
+        select.innerHTML = '';
+
+        for (const layer of layers) {
+            const option = document.createElement('option');
+            option.value = layer.name;
+            option.textContent = layer.name;
+            if (layer.name === currentLayer) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        }
     }
 
     private toggleLayerPanel(visible?: boolean): void {
@@ -920,7 +1014,70 @@ class DxfViewerApp {
 
         if (isVisible) {
             this.updateLayerList();
+            this.updateCurrentLayerDropdown();
         }
+    }
+
+    private toggleSnapPanel(visible?: boolean): void {
+        const panel = document.getElementById('snap-panel');
+        const btn = document.getElementById('btn-snap-settings');
+
+        if (!panel) return;
+
+        if (visible === undefined) {
+            panel.classList.toggle('visible');
+        } else if (visible) {
+            panel.classList.add('visible');
+        } else {
+            panel.classList.remove('visible');
+        }
+
+        const isVisible = panel.classList.contains('visible');
+        btn?.classList.toggle('active', isVisible);
+    }
+
+    private setupSnapPanel(): void {
+        // Close button
+        document.getElementById('btn-snap-close')?.addEventListener('click', () => {
+            this.toggleSnapPanel(false);
+        });
+
+        // Setup checkbox event listeners for each snap type
+        const checkboxes = document.querySelectorAll('#snap-types-list input[type="checkbox"]');
+        checkboxes.forEach((checkbox) => {
+            checkbox.addEventListener('change', () => {
+                this.updateActiveSnapTypes();
+            });
+        });
+    }
+
+    private updateActiveSnapTypes(): void {
+        if (!this.renderer) return;
+
+        const snapTypeMap: Record<string, SnapType> = {
+            'endpoint': SnapType.ENDPOINT,
+            'midpoint': SnapType.MIDPOINT,
+            'center': SnapType.CENTER,
+            'quadrant': SnapType.QUADRANT,
+            'intersection': SnapType.INTERSECTION,
+            'perpendicular': SnapType.PERPENDICULAR,
+            'nearest': SnapType.NEAREST
+        };
+
+        const activeTypes: SnapType[] = [];
+        const checkboxes = document.querySelectorAll('#snap-types-list input[type="checkbox"]:checked');
+
+        checkboxes.forEach((checkbox) => {
+            const snapName = (checkbox as HTMLInputElement).dataset.snap;
+            if (snapName && snapTypeMap[snapName]) {
+                activeTypes.push(snapTypeMap[snapName]);
+            }
+        });
+
+        this.renderer.setActiveSnapTypes(activeTypes);
+
+        const typeNames = activeTypes.map(t => t.charAt(0).toUpperCase() + t.slice(1));
+        this.commandLine?.print(`Snap types: ${typeNames.join(', ') || 'None'}`, 'response');
     }
 
     private updateLayerList(): void {
@@ -1096,6 +1253,8 @@ class DxfViewerApp {
             });
         } finally {
             this.showLoading(false);
+            // Focus command line so keyboard works immediately
+            this.commandLine?.focus();
         }
     }
 
@@ -1350,18 +1509,18 @@ class DxfViewerApp {
     }
 
     private setAnnotationModeIndicator(visible: boolean, type?: AnnotationType): void {
-        const buttons = ['btn-annotate-text', 'btn-annotate-arrow', 'btn-annotate-rect'];
+        const buttons = ['btn-anno-text', 'btn-anno-arrow'];
         buttons.forEach(id => {
             document.getElementById(id)?.classList.remove('active');
         });
 
         if (visible && type) {
             const buttonMap: Record<AnnotationType, string> = {
-                'text': 'btn-annotate-text',
-                'arrow': 'btn-annotate-arrow',
-                'rectangle': 'btn-annotate-rect',
-                'circle': 'btn-annotate-rect',
-                'line': 'btn-annotate-arrow'
+                'text': 'btn-anno-text',
+                'arrow': 'btn-anno-arrow',
+                'rectangle': 'btn-anno-arrow',
+                'circle': 'btn-anno-arrow',
+                'line': 'btn-anno-arrow'
             };
             document.getElementById(buttonMap[type])?.classList.add('active');
         }

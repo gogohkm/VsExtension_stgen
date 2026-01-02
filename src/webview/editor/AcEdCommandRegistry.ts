@@ -15,7 +15,7 @@ import { AcDistanceCmd } from '../commands/AcDistanceCmd';
 import { AcEraseCmd } from '../commands/AcEraseCmd';
 import { AcMoveCmd } from '../commands/AcMoveCmd';
 import { AcCopyCmd } from '../commands/AcCopyCmd';
-import { AcDimCmd } from '../commands/AcDimCmd';
+import { AcDimCmd, AcDimHorCmd, AcDimVerCmd, AcDimAlignedCmd, AcDimAngularCmd } from '../commands/AcDimCmd';
 import { AcZoomCmd, AcZoomWindowCmd, AcZoomExtentsCmd, AcZoomAllCmd } from '../commands/AcZoomCmd';
 
 /**
@@ -35,7 +35,11 @@ import { AcZoomCmd, AcZoomWindowCmd, AcZoomExtentsCmd, AcZoomAllCmd } from '../c
  * - ERASE (E): Delete selected entities
  *
  * Annotation Commands:
- * - DIM (DLI): Create linear dimensions
+ * - DIM (DLI): Create linear dimensions (auto-detect H/V)
+ * - DIMHOR (DH): Create horizontal dimension
+ * - DIMVER (DV): Create vertical dimension
+ * - DIMALIGNED (DAL): Create aligned dimension
+ * - DIMANGULAR (DAN): Create angular dimension
  *
  * Utility Commands:
  * - DIST (DI): Measure distance between points
@@ -68,9 +72,13 @@ export function registerCadCommands(): void {
     safeAdd('ACAD', 'COPY', 'CO', new AcCopyCmd());
     safeAdd('ACAD', 'ERASE', 'E', new AcEraseCmd());
 
-    // Annotation commands
+    // Annotation commands - Dimensions
     safeAdd('ACAD', 'DIM', 'DLI', new AcDimCmd());
     safeAdd('ACAD', 'DIMLINEAR', 'DIMLIN', new AcDimCmd());
+    safeAdd('ACAD', 'DIMHOR', 'DH', new AcDimHorCmd());
+    safeAdd('ACAD', 'DIMVER', 'DV', new AcDimVerCmd());
+    safeAdd('ACAD', 'DIMALIGNED', 'DAL', new AcDimAlignedCmd());
+    safeAdd('ACAD', 'DIMANGULAR', 'DAN', new AcDimAngularCmd());
 
     // Utility commands
     safeAdd('ACAD', 'DIST', 'DI', new AcDistanceCmd());
