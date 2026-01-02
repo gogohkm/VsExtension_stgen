@@ -58,6 +58,9 @@ export class AcEditor {
             // Enable command input mode - clicks should not affect selection
             this.renderer.setCommandInputMode(true);
 
+            // Set ortho base point for ortho constraint (if base point is provided)
+            this.renderer.setOrthoBasePoint(this.basePoint);
+
             // Show prompt
             const keywords = formatKeywords(options.keywords);
             const message = keywords ? `${options.message} ${keywords}:` : `${options.message}:`;
@@ -111,6 +114,9 @@ export class AcEditor {
 
             // Enable command input mode - clicks should not affect selection
             this.renderer.setCommandInputMode(true);
+
+            // Set ortho base point for ortho constraint (if base point is provided)
+            this.renderer.setOrthoBasePoint(this.basePoint);
 
             // Show prompt
             const keywords = formatKeywords(options.keywords);
@@ -300,6 +306,8 @@ export class AcEditor {
         // Disable command input mode if it was enabled (Point or Distance mode)
         if (this.inputMode === InputMode.Point || this.inputMode === InputMode.Distance) {
             this.renderer.setCommandInputMode(false);
+            // Clear ortho base point when input is resolved
+            this.renderer.setOrthoBasePoint(null);
         }
 
         // Reset state

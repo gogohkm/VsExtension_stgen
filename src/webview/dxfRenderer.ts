@@ -242,6 +242,10 @@ export class DxfRenderer {
     private currentDrawingColor: number = 0xffffff;
     private onDrawingComplete: ((entity: DxfEntity) => void) | null = null;
 
+    // Ortho mode - constrains cursor to horizontal/vertical from base point
+    private orthoEnabled: boolean = false;
+    private orthoBasePoint: { x: number; y: number } | null = null;
+
     constructor(container: HTMLElement) {
         this.container = container;
 
@@ -1630,6 +1634,23 @@ export class DxfRenderer {
         this.render();
     }
 
+    /**
+     * Sets the view to specific extents (useful for empty drawings)
+     */
+    setViewExtents(minX: number, minY: number, maxX: number, maxY: number): void {
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        this.viewCenter.x = minX + width / 2;
+        this.viewCenter.y = minY + height / 2;
+
+        const aspect = this.container.clientWidth / this.container.clientHeight;
+        this.viewWidth = Math.max(width, height * aspect);
+
+        this.updateCamera();
+        this.render();
+    }
+
     zoomIn(): void {
         this.viewWidth *= 0.8;
         this.updateCamera();
@@ -2261,6 +2282,22 @@ export class DxfRenderer {
         return Array.from(this.selectedEntities);
     }
 
+    /**
+     * Gets all entities in the drawing as DxfEntity array
+     * Used for saving the drawing to DXF file
+     */
+    getAllEntities(): DxfEntity[] {
+        const entities: DxfEntity[] = [];
+
+        this.entityGroup.traverse((object) => {
+            if (object.userData.entity) {
+                entities.push(object.userData.entity as DxfEntity);
+            }
+        });
+
+        return entities;
+    }
+
     // ========== Command Selection Mode ==========
 
     /**
@@ -2857,6 +2894,60 @@ export class DxfRenderer {
             this.snapMarker = null;
             this.currentSnapPoint = null;
             this.render();
+        }
+    }
+
+    // ========== Ortho Mode ==========
+
+    /**
+     * Enables/disables orthogonal mode
+     * When enabled, cursor movement is constrained to horizontal or vertical from base point
+     */
+    setOrthoEnabled(enabled: boolean): void {
+        this.orthoEnabled = enabled;
+    }
+
+    isOrthoEnabled(): boolean {
+        return this.orthoEnabled;
+    }
+
+    toggleOrtho(): boolean {
+        this.orthoEnabled = !this.orthoEnabled;
+        return this.orthoEnabled;
+    }
+
+    /**
+     * Sets the base point for ortho constraint
+     * Should be called when user clicks the first point of a line/move operation
+     */
+    setOrthoBasePoint(point: { x: number; y: number } | null): void {
+        this.orthoBasePoint = point;
+    }
+
+    getOrthoBasePoint(): { x: number; y: number } | null {
+        return this.orthoBasePoint;
+    }
+
+    /**
+     * Applies ortho constraint to a point relative to the base point
+     * Constrains to horizontal or vertical based on which axis has larger delta
+     * @param point The current cursor position
+     * @returns The constrained point if ortho is enabled and base point is set, otherwise the original point
+     */
+    applyOrthoConstraint(point: { x: number; y: number }): { x: number; y: number } {
+        if (!this.orthoEnabled || !this.orthoBasePoint) {
+            return point;
+        }
+
+        const dx = Math.abs(point.x - this.orthoBasePoint.x);
+        const dy = Math.abs(point.y - this.orthoBasePoint.y);
+
+        if (dx >= dy) {
+            // Horizontal constraint - lock Y to base point Y
+            return { x: point.x, y: this.orthoBasePoint.y };
+        } else {
+            // Vertical constraint - lock X to base point X
+            return { x: this.orthoBasePoint.x, y: point.y };
         }
     }
 

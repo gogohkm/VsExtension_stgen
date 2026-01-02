@@ -14,6 +14,7 @@
 import { AcEdCommand, EditorContext } from '../editor/command/AcEdCommand';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
 import { Point2D } from '../editor/input/handler/AcEdPointHandler';
+import { RectangleJig } from '../editor/input/AcEdPreviewJig';
 
 export class AcZoomCmd extends AcEdCommand {
     constructor() {
@@ -103,12 +104,17 @@ export class AcZoomCmd extends AcEdCommand {
         // Show first corner marker
         context.renderer.addDrawingPoint(corner1.x, corner1.y);
 
-        // Get second corner
+        // Create rectangle jig for visual feedback
+        const jig = new RectangleJig(context.renderer, corner1);
+
+        // Get second corner with rectangle preview
         const corner2Result = await editor.getPoint({
             message: 'Specify opposite corner',
-            basePoint: corner1
+            basePoint: corner1,
+            jig
         });
 
+        jig.clear();
         context.renderer.cancelDrawing();
 
         if (corner2Result.status !== PromptStatus.OK || !corner2Result.value) {
@@ -157,12 +163,17 @@ export class AcZoomWindowCmd extends AcEdCommand {
         const corner1 = corner1Result.value;
         context.renderer.addDrawingPoint(corner1.x, corner1.y);
 
-        // Get second corner
+        // Create rectangle jig for visual feedback
+        const jig = new RectangleJig(context.renderer, corner1);
+
+        // Get second corner with rectangle preview
         const corner2Result = await editor.getPoint({
             message: 'Specify opposite corner',
-            basePoint: corner1
+            basePoint: corner1,
+            jig
         });
 
+        jig.clear();
         context.renderer.cancelDrawing();
 
         if (corner2Result.status !== PromptStatus.OK || !corner2Result.value) {

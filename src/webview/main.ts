@@ -9,6 +9,7 @@ import { AnnotationManager, AnnotationType } from './annotationManager';
 import { AcEdCommandLineUI } from './editor/ui/AcEdCommandLineUI';
 import { AcEdCommandStack } from './editor/command/AcEdCommandStack';
 import { registerCadCommands } from './editor/AcEdCommandRegistry';
+import { createEmptyDxf, generateDxfContent, calculateExtents } from './dxfWriter';
 
 declare function acquireVsCodeApi(): {
     postMessage: (message: any) => void;
@@ -23,6 +24,8 @@ class DxfViewerApp {
     private commandLine: AcEdCommandLineUI | null = null;
     private parsedDxf: ParsedDxf | null = null;
     private fileName: string = '';
+    private isNewDrawing: boolean = false;
+    private hasUnsavedChanges: boolean = false;
 
     constructor() {
         this.initialize();
@@ -350,6 +353,16 @@ class DxfViewerApp {
             }
         });
 
+        // ORTHO command
+        this.commandLine.registerSimpleCommand({
+            name: 'ORTHO',
+            aliases: ['OR'],
+            description: 'Toggle ortho mode',
+            execute: () => {
+                this.toggleOrtho();
+            }
+        });
+
         // UNDO command
         this.commandLine.registerSimpleCommand({
             name: 'UNDO',
@@ -414,6 +427,36 @@ class DxfViewerApp {
                 this.commandLine?.print('Command history cleared', 'success');
             }
         });
+
+        // SAVE command - saves the current drawing
+        this.commandLine.registerSimpleCommand({
+            name: 'SAVE',
+            aliases: ['S', 'QSAVE'],
+            description: 'Save drawing to file',
+            execute: () => {
+                this.saveDrawing();
+            }
+        });
+
+        // SAVEAS command - saves to a new file
+        this.commandLine.registerSimpleCommand({
+            name: 'SAVEAS',
+            aliases: ['SA'],
+            description: 'Save drawing to a new file',
+            execute: () => {
+                this.saveDrawingAs();
+            }
+        });
+
+        // NEW command - create new empty drawing
+        this.commandLine.registerSimpleCommand({
+            name: 'NEW',
+            aliases: [],
+            description: 'Create new drawing',
+            execute: () => {
+                this.newDrawing();
+            }
+        });
     }
 
     private setupSnapMarkerEvents(): void {
@@ -437,8 +480,11 @@ class DxfViewerApp {
             }
 
             // Pass mouse move to command line for jig updates
-            const worldPoint = this.renderer.screenToWorld(e.clientX, e.clientY);
+            // Apply ortho constraint if enabled and base point is set
+            let worldPoint = this.renderer.screenToWorld(e.clientX, e.clientY);
             if (worldPoint) {
+                // Apply ortho constraint for jig preview
+                worldPoint = this.renderer.applyOrthoConstraint(worldPoint);
                 this.commandLine?.handleMouseMove(worldPoint.x, worldPoint.y);
             }
         });
@@ -455,9 +501,14 @@ class DxfViewerApp {
 
             // Get world coordinates - use snap point if available
             const snapPoint = this.renderer.getCurrentSnapPoint();
-            const worldPoint = snapPoint
+            let worldPoint = snapPoint
                 ? snapPoint.position
                 : this.renderer.screenToWorld(e.clientX, e.clientY);
+
+            // Apply ortho constraint if enabled
+            if (worldPoint) {
+                worldPoint = this.renderer.applyOrthoConstraint(worldPoint);
+            }
 
             // Pass click to command line for AcEditor handling
             if (worldPoint) {
@@ -495,6 +546,18 @@ class DxfViewerApp {
         btn?.classList.toggle('active', enabled);
 
         this.setStatus(enabled ? 'Snap enabled' : 'Snap disabled');
+    }
+
+    private toggleOrtho(): void {
+        if (!this.renderer) return;
+
+        const enabled = this.renderer.toggleOrtho();
+
+        const btn = document.getElementById('btn-ortho');
+        btn?.classList.toggle('active', enabled);
+
+        this.setStatus(enabled ? 'Ortho ON' : 'Ortho OFF');
+        this.commandLine?.print(enabled ? 'Ortho ON' : 'Ortho OFF', 'success');
     }
 
     private updateSnapStatus(snapPoint: SnapPoint): void {
@@ -673,6 +736,11 @@ class DxfViewerApp {
         // Snap toggle
         document.getElementById('btn-snap')?.addEventListener('click', () => {
             this.toggleSnap();
+        });
+
+        // Ortho toggle
+        document.getElementById('btn-ortho')?.addEventListener('click', () => {
+            this.toggleOrtho();
         });
 
         // Drawing tools
@@ -948,45 +1016,83 @@ class DxfViewerApp {
         this.fileName = fileName;
 
         try {
-            const parser = new DxfParser();
-            this.parsedDxf = parser.parse(dxfString);
+            // Check if file is empty or contains only whitespace
+            const trimmed = dxfString.trim();
+            if (!trimmed || trimmed.length < 10) {
+                // Create empty DXF structure for new/empty files
+                console.log('[DXF Viewer] Empty or invalid file detected, creating new drawing');
+                this.parsedDxf = createEmptyDxf();
+                this.isNewDrawing = true;
 
-            // Debug: Log block information
-            console.log(`Parsed ${this.parsedDxf.blocks.size} blocks:`);
-            for (const [name, block] of this.parsedDxf.blocks) {
-                console.log(`  Block "${name}": ${block.entities.length} entities, base=(${block.basePoint.x}, ${block.basePoint.y})`);
+                if (this.renderer) {
+                    this.renderer.loadDxf(this.parsedDxf);
+                    // Set a reasonable default view for empty drawing
+                    this.renderer.setViewExtents(-50, -50, 150, 150);
+                }
+
+                this.updateLayerList();
+                this.setStatus(`New drawing: ${fileName}`);
+                this.commandLine?.print('New drawing created. Use LINE, CIRCLE, etc. to draw.', 'success');
+
+                this.vscode.postMessage({
+                    type: 'info',
+                    message: `Created new drawing: ${fileName}`
+                });
+            } else {
+                // Try to parse the DXF content
+                const parser = new DxfParser();
+                this.parsedDxf = parser.parse(dxfString);
+                this.isNewDrawing = false;
+
+                // Debug: Log block information
+                console.log(`Parsed ${this.parsedDxf.blocks.size} blocks:`);
+                for (const [name, block] of this.parsedDxf.blocks) {
+                    console.log(`  Block "${name}": ${block.entities.length} entities, base=(${block.basePoint.x}, ${block.basePoint.y})`);
+                }
+
+                // Debug: Count INSERT entities
+                const insertCount = this.parsedDxf.entities.filter(e => e.type === 'INSERT').length;
+                console.log(`Found ${insertCount} INSERT entities in ENTITIES section`);
+
+                if (this.renderer) {
+                    this.renderer.loadDxf(this.parsedDxf);
+                }
+
+                // Update layer panel if visible
+                this.updateLayerList();
+
+                const entityCount = this.parsedDxf.entities.length;
+                const layerCount = this.parsedDxf.layers.size;
+                const blockCount = this.parsedDxf.blocks.size;
+                this.setStatus(`Loaded: ${fileName} (${entityCount} entities, ${layerCount} layers, ${blockCount} blocks)`);
+
+                this.vscode.postMessage({
+                    type: 'info',
+                    message: `Loaded ${fileName}: ${entityCount} entities, ${blockCount} blocks, ${insertCount} inserts`
+                });
+
+                // Auto-load annotations if they exist
+                this.requestLoadAnnotations();
             }
-
-            // Debug: Count INSERT entities
-            const insertCount = this.parsedDxf.entities.filter(e => e.type === 'INSERT').length;
-            console.log(`Found ${insertCount} INSERT entities in ENTITIES section`);
+        } catch (error) {
+            console.error('Failed to parse DXF:', error);
+            // If parsing fails, create an empty drawing instead of showing error
+            console.log('[DXF Viewer] Parse failed, creating new drawing');
+            this.parsedDxf = createEmptyDxf();
+            this.isNewDrawing = true;
 
             if (this.renderer) {
                 this.renderer.loadDxf(this.parsedDxf);
+                this.renderer.setViewExtents(-50, -50, 150, 150);
             }
 
-            // Update layer panel if visible
             this.updateLayerList();
-
-            const entityCount = this.parsedDxf.entities.length;
-            const layerCount = this.parsedDxf.layers.size;
-            const blockCount = this.parsedDxf.blocks.size;
-            this.setStatus(`Loaded: ${fileName} (${entityCount} entities, ${layerCount} layers, ${blockCount} blocks)`);
+            this.setStatus(`New drawing: ${fileName} (parse error, started fresh)`);
+            this.commandLine?.print('Could not parse file. Created new drawing.', 'response');
 
             this.vscode.postMessage({
                 type: 'info',
-                message: `Loaded ${fileName}: ${entityCount} entities, ${blockCount} blocks, ${insertCount} inserts`
-            });
-
-            // Auto-load annotations if they exist
-            this.requestLoadAnnotations();
-
-        } catch (error) {
-            console.error('Failed to parse DXF:', error);
-            this.setStatus('Error loading DXF file');
-            this.vscode.postMessage({
-                type: 'error',
-                message: `Failed to parse DXF: ${error}`
+                message: `Created new drawing (parse error): ${fileName}`
             });
         } finally {
             this.showLoading(false);
@@ -1003,6 +1109,98 @@ class DxfViewerApp {
             type: 'captured',
             data: dataUrl
         });
+    }
+
+    /**
+     * Saves the current drawing to the original file
+     */
+    private saveDrawing(): void {
+        if (!this.parsedDxf) {
+            this.commandLine?.print('No drawing to save', 'error');
+            return;
+        }
+
+        // Get current entities from renderer
+        const entities = this.renderer?.getAllEntities() || [];
+
+        // Update parsedDxf with current entities
+        this.parsedDxf.entities = entities;
+
+        // Update extents
+        const extents = calculateExtents(entities);
+        this.parsedDxf.bounds = {
+            minX: extents.min.x,
+            minY: extents.min.y,
+            maxX: extents.max.x,
+            maxY: extents.max.y
+        };
+
+        // Generate DXF content
+        const dxfContent = generateDxfContent(this.parsedDxf);
+
+        // Send to extension for saving
+        this.vscode.postMessage({
+            type: 'saveDxf',
+            data: dxfContent
+        });
+
+        this.hasUnsavedChanges = false;
+        this.commandLine?.print('Drawing saved', 'success');
+    }
+
+    /**
+     * Saves the current drawing to a new file
+     */
+    private saveDrawingAs(): void {
+        if (!this.parsedDxf) {
+            this.commandLine?.print('No drawing to save', 'error');
+            return;
+        }
+
+        // Get current entities from renderer
+        const entities = this.renderer?.getAllEntities() || [];
+
+        // Update parsedDxf with current entities
+        this.parsedDxf.entities = entities;
+
+        // Update extents
+        const extents = calculateExtents(entities);
+        this.parsedDxf.bounds = {
+            minX: extents.min.x,
+            minY: extents.min.y,
+            maxX: extents.max.x,
+            maxY: extents.max.y
+        };
+
+        // Generate DXF content
+        const dxfContent = generateDxfContent(this.parsedDxf);
+
+        // Send to extension for Save As
+        this.vscode.postMessage({
+            type: 'saveDxfAs',
+            data: dxfContent,
+            fileName: this.fileName
+        });
+
+        this.commandLine?.print('Save As dialog opened', 'response');
+    }
+
+    /**
+     * Creates a new empty drawing
+     */
+    private newDrawing(): void {
+        this.parsedDxf = createEmptyDxf();
+        this.isNewDrawing = true;
+        this.hasUnsavedChanges = false;
+
+        if (this.renderer) {
+            this.renderer.loadDxf(this.parsedDxf);
+            this.renderer.setViewExtents(-50, -50, 150, 150);
+        }
+
+        this.updateLayerList();
+        this.setStatus('New drawing');
+        this.commandLine?.print('New drawing created', 'success');
     }
 
     private extractEntities(): void {

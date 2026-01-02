@@ -232,6 +232,12 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
             case 'info':
                 vscode.window.showInformationMessage(message.message);
                 break;
+            case 'saveDxf':
+                this.saveDxfFile(documentUri, message.data);
+                break;
+            case 'saveDxfAs':
+                this.saveDxfFileAs(message.data, message.fileName);
+                break;
             // MCP Bridge responses
             case 'mcp_response':
                 if (DxfEditorProvider.mcpBridge && message.requestId) {
@@ -319,6 +325,39 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 type: 'loadAnnotations',
                 data: '[]'
             });
+        }
+    }
+
+    /**
+     * Saves DXF content to the original file
+     */
+    private async saveDxfFile(documentUri: vscode.Uri, dxfContent: string): Promise<void> {
+        try {
+            const buffer = Buffer.from(dxfContent, 'utf-8');
+            await vscode.workspace.fs.writeFile(documentUri, buffer);
+            vscode.window.showInformationMessage(`Saved: ${path.basename(documentUri.fsPath)}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to save DXF file: ${error}`);
+        }
+    }
+
+    /**
+     * Saves DXF content to a new file (Save As)
+     */
+    private async saveDxfFileAs(dxfContent: string, suggestedFileName: string): Promise<void> {
+        try {
+            const uri = await vscode.window.showSaveDialog({
+                filters: { 'DXF Files': ['dxf'] },
+                defaultUri: vscode.Uri.file(suggestedFileName)
+            });
+
+            if (uri) {
+                const buffer = Buffer.from(dxfContent, 'utf-8');
+                await vscode.workspace.fs.writeFile(uri, buffer);
+                vscode.window.showInformationMessage(`Saved: ${uri.fsPath}`);
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to save DXF file: ${error}`);
         }
     }
 
@@ -423,6 +462,7 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         </div>
         <div class="button-row">
             <button id="btn-snap" class="active" title="Toggle Snap (S)">Snap</button>
+            <button id="btn-ortho" title="Toggle Ortho Mode">Ortho</button>
         </div>
         <span class="separator"></span>
         <div class="button-row">
