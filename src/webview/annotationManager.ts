@@ -189,24 +189,24 @@ export class AnnotationManager {
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d')!;
 
-        const fontSize = 48;
-        const padding = 10;
+        const fontSize = 64; // Higher resolution for better quality
+        const padding = 12;
         const fontFamily = AnnotationManager.FONT_FAMILY;
 
         context.font = `bold ${fontSize}px ${fontFamily}`;
         const metrics = context.measureText(text);
 
-        canvas.width = Math.max(Math.ceil(metrics.width) + padding * 2, 50);
+        canvas.width = Math.max(Math.ceil(metrics.width) + padding * 2, 80);
         canvas.height = fontSize + padding * 2;
 
         // Draw background
-        context.fillStyle = 'rgba(30, 30, 30, 0.8)';
+        context.fillStyle = 'rgba(30, 30, 30, 0.85)';
         context.fillRect(0, 0, canvas.width, canvas.height);
 
         // Draw border
         context.strokeStyle = '#' + color.toString(16).padStart(6, '0');
-        context.lineWidth = 2;
-        context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+        context.lineWidth = 3;
+        context.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
 
         // Draw text with Korean-supporting font
         context.fillStyle = '#' + color.toString(16).padStart(6, '0');
@@ -219,8 +219,19 @@ export class AnnotationManager {
         const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
         const sprite = new THREE.Sprite(material);
 
-        const scale = 0.5;
-        sprite.scale.set(canvas.width * scale / 10, canvas.height * scale / 10, 1);
+        // Calculate scale based on current view width for proper sizing relative to drawing
+        const camera = this.getCamera();
+        const viewWidth = camera ? (camera.right - camera.left) : 100;
+
+        // Scale text to be approximately 3% of view width, with min/max limits
+        const baseTextSize = viewWidth * 0.03;
+        const minSize = 5;   // Minimum world units
+        const maxSize = 100; // Maximum world units
+        const textWorldSize = Math.max(minSize, Math.min(maxSize, baseTextSize));
+
+        // Calculate scale factor: sprite scale = world size / canvas pixel ratio
+        const aspectRatio = canvas.width / canvas.height;
+        sprite.scale.set(textWorldSize * aspectRatio, textWorldSize, 1);
         sprite.position.set(x, y, 1);
 
         return sprite;
