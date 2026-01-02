@@ -33,7 +33,7 @@ html, body {
     position: absolute;
     top: 10px;
     left: 10px;
-    display: flex;
+    display: none; /* Hidden by default - use right-click context menu instead */
     flex-direction: column;
     gap: 2px;
     padding: 4px;
@@ -41,6 +41,10 @@ html, body {
     border: 1px solid #5a5a5a;
     border-radius: 3px;
     z-index: 100;
+}
+
+#toolbar.visible {
+    display: flex;
 }
 
 #toolbar button {
@@ -388,19 +392,59 @@ html, body {
     border: 1px solid var(--vscode-menu-border, #454545);
     border-radius: 4px;
     padding: 4px 0;
-    min-width: 150px;
+    min-width: 180px;
     z-index: 300;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    display: none;
+}
+
+.context-menu.visible {
+    display: block;
+}
+
+.context-menu-section {
+    padding: 0;
+}
+
+.context-menu-label {
+    padding: 4px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--vscode-descriptionForeground, #888888);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .context-menu-item {
-    padding: 6px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 12px;
     cursor: pointer;
     font-size: 12px;
+    color: var(--vscode-menu-foreground, #cccccc);
+    transition: background-color 0.1s;
 }
 
 .context-menu-item:hover {
     background-color: var(--vscode-menu-selectionBackground, #094771);
+    color: var(--vscode-menu-selectionForeground, #ffffff);
+}
+
+.context-menu-item .menu-text {
+    flex: 1;
+}
+
+.context-menu-item .menu-shortcut {
+    margin-left: 16px;
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground, #888888);
+    font-family: monospace;
+}
+
+.context-menu-item:hover .menu-shortcut {
+    color: var(--vscode-menu-selectionForeground, #ffffff);
+    opacity: 0.8;
 }
 
 .context-menu-separator {

@@ -73,6 +73,7 @@ class DxfViewerApp {
 
         // Setup UI event listeners
         this.setupToolbarEvents();
+        this.setupContextMenu();
         this.setupLayerPanel();
         this.setupPropertiesPanel();
         this.setupSnapPanel();
@@ -794,6 +795,86 @@ class DxfViewerApp {
         document.getElementById('btn-dim-angular')?.addEventListener('click', () => {
             this.commandLine?.executeCommand('DIMANGULAR');
         });
+    }
+
+    private setupContextMenu(): void {
+        const container = document.getElementById('viewer-container');
+        const contextMenu = document.getElementById('context-menu');
+
+        if (!container || !contextMenu) return;
+
+        // Show context menu on right-click
+        container.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+
+            // Position the menu at the cursor
+            const x = e.clientX;
+            const y = e.clientY;
+
+            // Get viewport dimensions
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+
+            // Show the menu first to get its dimensions
+            contextMenu.classList.add('visible');
+
+            // Get menu dimensions
+            const menuWidth = contextMenu.offsetWidth;
+            const menuHeight = contextMenu.offsetHeight;
+
+            // Adjust position to keep menu within viewport
+            let menuX = x;
+            let menuY = y;
+
+            if (x + menuWidth > viewportWidth) {
+                menuX = viewportWidth - menuWidth - 5;
+            }
+
+            if (y + menuHeight > viewportHeight - 80) { // Account for command panel and status bar
+                menuY = y - menuHeight;
+                if (menuY < 0) {
+                    menuY = 5;
+                }
+            }
+
+            contextMenu.style.left = `${menuX}px`;
+            contextMenu.style.top = `${menuY}px`;
+        });
+
+        // Hide context menu on click outside
+        document.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            if (!contextMenu.contains(target)) {
+                this.hideContextMenu();
+            }
+        });
+
+        // Hide context menu on Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.hideContextMenu();
+            }
+        });
+
+        // Handle menu item clicks
+        contextMenu.querySelectorAll('.context-menu-item').forEach((item) => {
+            item.addEventListener('click', (e) => {
+                const menuItem = e.currentTarget as HTMLElement;
+                const command = menuItem.dataset.command;
+
+                if (command) {
+                    this.hideContextMenu();
+                    this.commandLine?.executeCommand(command);
+                }
+            });
+        });
+    }
+
+    private hideContextMenu(): void {
+        const contextMenu = document.getElementById('context-menu');
+        if (contextMenu) {
+            contextMenu.classList.remove('visible');
+        }
     }
 
     private setupPropertiesPanel(): void {

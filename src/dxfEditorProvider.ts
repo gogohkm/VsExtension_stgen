@@ -538,6 +538,56 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         <span id="status-text">Ready</span>
         <span id="coords"></span>
     </div>
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-section">
+            <div class="context-menu-label">Draw</div>
+            <div class="context-menu-item" data-command="LINE"><span class="menu-text">Line</span><span class="menu-shortcut">L</span></div>
+            <div class="context-menu-item" data-command="CIRCLE"><span class="menu-text">Circle</span><span class="menu-shortcut">C</span></div>
+            <div class="context-menu-item" data-command="RECTANGLE"><span class="menu-text">Rectangle</span><span class="menu-shortcut">REC</span></div>
+            <div class="context-menu-item" data-command="ARC"><span class="menu-text">Arc</span><span class="menu-shortcut">A</span></div>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-section">
+            <div class="context-menu-label">Dimension</div>
+            <div class="context-menu-item" data-command="DIM"><span class="menu-text">Linear</span><span class="menu-shortcut">DLI</span></div>
+            <div class="context-menu-item" data-command="DIMHOR"><span class="menu-text">Horizontal</span><span class="menu-shortcut">DH</span></div>
+            <div class="context-menu-item" data-command="DIMVER"><span class="menu-text">Vertical</span><span class="menu-shortcut">DV</span></div>
+            <div class="context-menu-item" data-command="DIMALIGNED"><span class="menu-text">Aligned</span><span class="menu-shortcut">DAL</span></div>
+            <div class="context-menu-item" data-command="DIMANGULAR"><span class="menu-text">Angular</span><span class="menu-shortcut">DAN</span></div>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-section">
+            <div class="context-menu-label">Modify</div>
+            <div class="context-menu-item" data-command="ERASE"><span class="menu-text">Erase</span><span class="menu-shortcut">E</span></div>
+            <div class="context-menu-item" data-command="MOVE"><span class="menu-text">Move</span><span class="menu-shortcut">M</span></div>
+            <div class="context-menu-item" data-command="COPY"><span class="menu-text">Copy</span><span class="menu-shortcut">CO</span></div>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-section">
+            <div class="context-menu-label">View</div>
+            <div class="context-menu-item" data-command="FIT"><span class="menu-text">Zoom Fit</span><span class="menu-shortcut">F</span></div>
+            <div class="context-menu-item" data-command="LAYER"><span class="menu-text">Layers</span><span class="menu-shortcut">LA</span></div>
+            <div class="context-menu-item" data-command="PROPERTIES"><span class="menu-text">Properties</span><span class="menu-shortcut">PR</span></div>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-section">
+            <div class="context-menu-label">Settings</div>
+            <div class="context-menu-item" data-command="SNAP"><span class="menu-text">Snap On/Off</span><span class="menu-shortcut">S</span></div>
+            <div class="context-menu-item" data-command="ORTHO"><span class="menu-text">Ortho On/Off</span><span class="menu-shortcut">OR</span></div>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-section">
+            <div class="context-menu-label">Export</div>
+            <div class="context-menu-item" data-command="CAPTURE"><span class="menu-text">Capture View</span><span class="menu-shortcut">CAP</span></div>
+            <div class="context-menu-item" data-command="EXTRACT"><span class="menu-text">Extract Entities</span><span class="menu-shortcut">EXT</span></div>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-section">
+            <div class="context-menu-label">File</div>
+            <div class="context-menu-item" data-command="SAVE"><span class="menu-text">Save</span><span class="menu-shortcut">S</span></div>
+            <div class="context-menu-item" data-command="SAVEAS"><span class="menu-text">Save As</span><span class="menu-shortcut">SA</span></div>
+        </div>
+    </div>
     <div id="loading" style="display: none;">
         <div class="spinner"></div>
         <span>Loading DXF...</span>
