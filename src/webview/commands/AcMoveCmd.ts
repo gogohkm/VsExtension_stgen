@@ -26,11 +26,23 @@ export class AcMoveCmd extends AcEdCommand {
 
         context.commandLine.print('MOVE', 'command');
 
-        // Check if there are selected entities
-        const selectedCount = context.renderer.getSelectedCount();
+        // Check if there are selected entities, if not prompt for selection
+        let selectedCount = context.renderer.getSelectedCount();
         if (selectedCount === 0) {
-            context.commandLine.print('No objects selected. Select objects first.', 'error');
-            return;
+            const result = await editor.getSelection({
+                message: 'Select objects'
+            });
+
+            if (result.status === PromptStatus.Cancel) {
+                context.commandLine.print('*Cancel*', 'error');
+                return;
+            }
+
+            selectedCount = context.renderer.getSelectedCount();
+            if (selectedCount === 0) {
+                context.commandLine.print('No objects selected', 'response');
+                return;
+            }
         }
 
         context.commandLine.print(`${selectedCount} object(s) selected`, 'response');

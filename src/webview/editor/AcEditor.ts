@@ -55,6 +55,9 @@ export class AcEditor {
             this.currentOptions = options;
             this.basePoint = options.basePoint || null;
 
+            // Enable command input mode - clicks should not affect selection
+            this.renderer.setCommandInputMode(true);
+
             // Show prompt
             const keywords = formatKeywords(options.keywords);
             const message = keywords ? `${options.message} ${keywords}:` : `${options.message}:`;
@@ -80,6 +83,10 @@ export class AcEditor {
             this.inputReject = reject;
             this.currentOptions = options;
 
+            // Enable command selection mode in renderer
+            // This prevents clearing selection when clicking empty space
+            this.renderer.setCommandSelectionMode(true);
+
             // Show prompt
             const message = options.message || 'Select objects';
             this.commandLine.setPrompt(`${message}:`);
@@ -101,6 +108,9 @@ export class AcEditor {
             this.inputReject = reject;
             this.currentOptions = options;
             this.basePoint = options.basePoint || null;
+
+            // Enable command input mode - clicks should not affect selection
+            this.renderer.setCommandInputMode(true);
 
             // Show prompt
             const keywords = formatKeywords(options.keywords);
@@ -280,6 +290,16 @@ export class AcEditor {
         // Clear jig
         if (this.currentOptions?.jig) {
             this.currentOptions.jig.clear();
+        }
+
+        // Disable command selection mode if it was enabled
+        if (this.inputMode === InputMode.Selection) {
+            this.renderer.setCommandSelectionMode(false);
+        }
+
+        // Disable command input mode if it was enabled (Point or Distance mode)
+        if (this.inputMode === InputMode.Point || this.inputMode === InputMode.Distance) {
+            this.renderer.setCommandInputMode(false);
         }
 
         // Reset state

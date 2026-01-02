@@ -38,6 +38,7 @@ export class AcEdCommandLineUI implements CommandLineInterface {
     private renderer: DxfRenderer | null = null;
     private editor: AcEditor | null = null;
     private activeCommand: AcEdCommand | null = null;
+    private lastCommandName: string | null = null; // For repeating last command with Enter
 
     // Simple utility commands (non-CAD commands)
     private simpleCommands: Map<string, SimpleCommandDefinition> = new Map();
@@ -116,6 +117,13 @@ export class AcEdCommandLineUI implements CommandLineInterface {
             // If editor is waiting for input with allowNone, send empty
             if (this.editor?.isWaitingForInput()) {
                 this.editor.handleTextInput('');
+                return;
+            }
+
+            // If no active command and we have a last command, repeat it (AutoCAD style)
+            if (!this.activeCommand && this.lastCommandName) {
+                this.print(this.lastCommandName, 'command');
+                this.parseAndExecute(this.lastCommandName);
             }
             return;
         }
@@ -147,6 +155,8 @@ export class AcEdCommandLineUI implements CommandLineInterface {
         // First, check simple utility commands
         const simpleCmd = this.findSimpleCommand(cmdName);
         if (simpleCmd) {
+            // Save the command name for repeat functionality
+            this.lastCommandName = simpleCmd.name;
             try {
                 await simpleCmd.execute();
             } catch (error) {
@@ -160,6 +170,8 @@ export class AcEdCommandLineUI implements CommandLineInterface {
         const command = commandStack.lookupCmd(cmdName);
 
         if (command) {
+            // Save the command name for repeat functionality
+            this.lastCommandName = command.globalName;
             await this.executeAcEdCommand(command);
         } else {
             this.print(`Unknown command: ${cmdName}. Type HELP for available commands.`, 'error');
@@ -334,5 +346,25 @@ export class AcEdCommandLineUI implements CommandLineInterface {
      */
     getEditor(): AcEditor | null {
         return this.editor;
+    }
+
+    /**
+     * Repeats the last executed command (AutoCAD style)
+     * Returns true if a command was repeated, false otherwise
+     */
+    repeatLastCommand(): boolean {
+        if (!this.activeCommand && this.lastCommandName) {
+            this.print(this.lastCommandName, 'command');
+            this.parseAndExecute(this.lastCommandName);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Checks if a command is currently active
+     */
+    isCommandActive(): boolean {
+        return this.activeCommand !== null;
     }
 }

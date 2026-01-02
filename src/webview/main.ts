@@ -110,6 +110,26 @@ class DxfViewerApp {
                 return;
             }
 
+            // Handle Enter/Space when editor is waiting for input (e.g., Selection mode)
+            // This allows confirming selection without clicking on command line first
+            if (e.key === 'Enter' || e.key === ' ') {
+                const editor = this.commandLine?.getEditor();
+                if (editor?.isWaitingForInput()) {
+                    // Pass empty input to confirm selection or finish input
+                    editor.handleTextInput('');
+                    e.preventDefault();
+                    return;
+                }
+
+                // If no active command, repeat last command (AutoCAD style)
+                if (!this.commandLine?.isCommandActive()) {
+                    if (this.commandLine?.repeatLastCommand()) {
+                        e.preventDefault();
+                        return;
+                    }
+                }
+            }
+
             // Delete selected entities
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (this.renderer) {
@@ -433,8 +453,11 @@ class DxfViewerApp {
         container.addEventListener('click', (e) => {
             if (!this.renderer) return;
 
-            // Get world coordinates
-            const worldPoint = this.renderer.screenToWorld(e.clientX, e.clientY);
+            // Get world coordinates - use snap point if available
+            const snapPoint = this.renderer.getCurrentSnapPoint();
+            const worldPoint = snapPoint
+                ? snapPoint.position
+                : this.renderer.screenToWorld(e.clientX, e.clientY);
 
             // Pass click to command line for AcEditor handling
             if (worldPoint) {

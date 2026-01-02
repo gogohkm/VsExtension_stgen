@@ -16,6 +16,7 @@ import { AcEraseCmd } from '../commands/AcEraseCmd';
 import { AcMoveCmd } from '../commands/AcMoveCmd';
 import { AcCopyCmd } from '../commands/AcCopyCmd';
 import { AcDimCmd } from '../commands/AcDimCmd';
+import { AcZoomCmd, AcZoomWindowCmd, AcZoomExtentsCmd, AcZoomAllCmd } from '../commands/AcZoomCmd';
 
 /**
  * Registers all CAD commands to the command stack
@@ -38,6 +39,12 @@ import { AcDimCmd } from '../commands/AcDimCmd';
  *
  * Utility Commands:
  * - DIST (DI): Measure distance between points
+ *
+ * View Commands:
+ * - ZOOM (Z): Control view magnification
+ * - ZOOMWINDOW (ZW): Zoom to window
+ * - ZOOMEXTENTS (ZE): Zoom to extents
+ * - ZOOMALL (ZA): Zoom to all
  */
 export function registerCadCommands(): void {
     const stack = AcEdCommandStack.instance;
@@ -67,6 +74,12 @@ export function registerCadCommands(): void {
 
     // Utility commands
     safeAdd('ACAD', 'DIST', 'DI', new AcDistanceCmd());
+
+    // View commands
+    safeAdd('ACAD', 'ZOOM', 'Z', new AcZoomCmd());
+    safeAdd('ACAD', 'ZOOMWINDOW', 'ZW', new AcZoomWindowCmd());
+    safeAdd('ACAD', 'ZOOMEXTENTS', 'ZE', new AcZoomExtentsCmd());
+    safeAdd('ACAD', 'ZOOMALL', 'ZA', new AcZoomAllCmd());
 }
 
 /**

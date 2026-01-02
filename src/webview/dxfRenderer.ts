@@ -209,6 +209,8 @@ export class DxfRenderer {
     private selectedEntities: Set<THREE.Object3D> = new Set();
     private hoveredEntity: THREE.Object3D | null = null;
     private originalMaterials: Map<THREE.Object3D, THREE.Material | THREE.Material[]> = new Map();
+    private commandSelectionMode: boolean = false; // When true, clicking empty space doesn't clear selection
+    private commandInputMode: boolean = false; // When true, clicks don't affect selection at all (point input mode)
 
     // Material cache for performance
     private materialCache: MaterialCache = new MaterialCache();
@@ -1785,13 +1787,41 @@ export class DxfRenderer {
         const worldMaxY = this.viewCenter.y + halfHeight - startY * (this.viewWidth / aspect);
         const worldMinY = this.viewCenter.y + halfHeight - endY * (this.viewWidth / aspect);
 
-        // Set new view center and width
-        const newWidth = worldMaxX - worldMinX;
-        const newHeight = worldMaxY - worldMinY;
+        // Use the public method
+        this.zoomToWindow(
+            { x: worldMinX, y: worldMinY },
+            { x: worldMaxX, y: worldMaxY }
+        );
+    }
 
-        this.viewCenter.x = (worldMinX + worldMaxX) / 2;
-        this.viewCenter.y = (worldMinY + worldMaxY) / 2;
-        this.viewWidth = Math.max(newWidth, newHeight * aspect) * 1.05; // 5% padding
+    /**
+     * Zoom to a rectangular window defined by two corner points (world coordinates)
+     * @param corner1 First corner point
+     * @param corner2 Second corner point (opposite corner)
+     * @param padding Padding factor (default 5%)
+     */
+    zoomToWindow(
+        corner1: { x: number; y: number },
+        corner2: { x: number; y: number },
+        padding: number = 0.05
+    ): void {
+        const minX = Math.min(corner1.x, corner2.x);
+        const maxX = Math.max(corner1.x, corner2.x);
+        const minY = Math.min(corner1.y, corner2.y);
+        const maxY = Math.max(corner1.y, corner2.y);
+
+        const width = maxX - minX;
+        const height = maxY - minY;
+
+        if (width <= 0 || height <= 0) {
+            return; // Invalid window
+        }
+
+        const aspect = this.container.clientWidth / this.container.clientHeight;
+
+        this.viewCenter.x = (minX + maxX) / 2;
+        this.viewCenter.y = (minY + maxY) / 2;
+        this.viewWidth = Math.max(width, height * aspect) * (1 + padding);
 
         this.updateCamera();
         this.render();
@@ -2030,6 +2060,11 @@ export class DxfRenderer {
     }
 
     private handleClick(e: MouseEvent): void {
+        // Skip selection handling when in command input mode (e.g., getPoint)
+        if (this.commandInputMode) {
+            return;
+        }
+
         const ndc = this.screenToNDC(e);
         this.raycaster.setFromCamera(ndc, this.camera);
 
@@ -2038,8 +2073,8 @@ export class DxfRenderer {
         if (intersects.length > 0) {
             const hitObject = this.findEntityRoot(intersects[0].object);
 
-            if (e.ctrlKey || e.metaKey) {
-                // Toggle selection with Ctrl/Cmd
+            if (e.ctrlKey || e.metaKey || this.commandSelectionMode) {
+                // Toggle selection with Ctrl/Cmd or in command selection mode
                 if (this.selectedEntities.has(hitObject)) {
                     this.deselectEntity(hitObject);
                 } else {
@@ -2051,8 +2086,8 @@ export class DxfRenderer {
                 this.selectEntity(hitObject);
             }
         } else {
-            // Click on empty space - clear selection
-            if (!e.ctrlKey && !e.metaKey) {
+            // Click on empty space - clear selection (but not in command selection mode)
+            if (!e.ctrlKey && !e.metaKey && !this.commandSelectionMode) {
                 this.clearSelection();
             }
         }
@@ -2224,6 +2259,39 @@ export class DxfRenderer {
 
     getSelectedEntities(): THREE.Object3D[] {
         return Array.from(this.selectedEntities);
+    }
+
+    // ========== Command Selection Mode ==========
+
+    /**
+     * Sets command selection mode.
+     * When enabled, clicking on empty space doesn't clear selection
+     * and clicking on entities toggles selection (like Ctrl+click).
+     */
+    setCommandSelectionMode(enabled: boolean): void {
+        this.commandSelectionMode = enabled;
+    }
+
+    /**
+     * Gets whether command selection mode is active
+     */
+    isCommandSelectionMode(): boolean {
+        return this.commandSelectionMode;
+    }
+
+    /**
+     * Sets command input mode.
+     * When enabled, clicks don't affect selection at all (used during getPoint, etc.)
+     */
+    setCommandInputMode(enabled: boolean): void {
+        this.commandInputMode = enabled;
+    }
+
+    /**
+     * Gets whether command input mode is active
+     */
+    isCommandInputMode(): boolean {
+        return this.commandInputMode;
     }
 
     // ========== Entity Deletion ==========
