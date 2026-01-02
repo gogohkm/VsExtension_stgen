@@ -63,6 +63,11 @@ class DxfViewerApp {
         this.commandLine = new AcEdCommandLineUI();
         this.commandLine.setRenderer(this.renderer);
 
+        // Set up text input callback for annotation manager (prompt() doesn't work in VS Code webview)
+        this.annotationManager.setTextInputCallback((position, done) => {
+            this.requestAnnotationText(position, done);
+        });
+
         // Register utility commands (non-CAD commands)
         this.registerUtilityCommands();
 
@@ -250,8 +255,8 @@ class DxfViewerApp {
 
         // ANNOTATE commands
         this.commandLine.registerSimpleCommand({
-            name: 'TEXT',
-            aliases: ['T', 'DTEXT'],
+            name: 'ANNOTEXT',
+            aliases: ['AT'],
             description: 'Add text annotation',
             execute: () => {
                 this.startAnnotation('text');
@@ -260,9 +265,9 @@ class DxfViewerApp {
         });
 
         this.commandLine.registerSimpleCommand({
-            name: 'ARROW',
-            aliases: ['LEADER', 'LE'],
-            description: 'Add arrow annotation',
+            name: 'ANNOLINE',
+            aliases: ['AL', 'ARROW', 'LEADER'],
+            description: 'Add arrow/line annotation',
             execute: () => {
                 this.startAnnotation('arrow');
                 this.commandLine?.print('Click start point for arrow', 'prompt');
@@ -270,12 +275,22 @@ class DxfViewerApp {
         });
 
         this.commandLine.registerSimpleCommand({
-            name: 'RECTANGLE',
-            aliases: ['REC', 'RECT'],
+            name: 'ANNORECT',
+            aliases: ['AR'],
             description: 'Add rectangle annotation',
             execute: () => {
                 this.startAnnotation('rectangle');
                 this.commandLine?.print('Click first corner of rectangle', 'prompt');
+            }
+        });
+
+        // LAYER command for adding new layers
+        this.commandLine.registerSimpleCommand({
+            name: 'NEWLAYER',
+            aliases: ['NL', 'LAYNEW'],
+            description: 'Create a new layer',
+            execute: () => {
+                this.startNewLayerInput();
             }
         });
 
@@ -944,34 +959,65 @@ class DxfViewerApp {
         });
     }
 
+    private startNewLayerInput(): void {
+        // Use command line input instead of prompt() which doesn't work in VS Code webview
+        this.commandLine?.print('Enter new layer name:', 'prompt');
+        this.commandLine?.setPrompt('Layer name:');
+        this.commandLine?.focus();
+
+        // Set pending input handler
+        this.commandLine?.setPendingInputHandler((name: string) => {
+            this.createLayerFromInput(name);
+        });
+    }
+
+    // Called from + button in layer panel
     private showAddLayerDialog(): void {
-        // Create simple dialog for new layer name
-        const layerName = prompt('Enter new layer name:');
-        if (!layerName || !layerName.trim()) {
+        this.startNewLayerInput();
+    }
+
+    private createLayerFromInput(name: string): void {
+        if (!name.trim()) {
+            this.commandLine?.print('Layer creation cancelled.', 'response');
             return;
         }
 
-        const name = layerName.trim().toUpperCase();
+        const layerName = name.trim().toUpperCase();
 
         if (!this.renderer) {
             return;
         }
 
         // Add the layer
-        const added = this.renderer.addLayer(name);
+        const added = this.renderer.addLayer(layerName);
         if (added) {
             // Set as current layer
-            this.renderer.setDrawingLayer(name);
+            this.renderer.setDrawingLayer(layerName);
             // Update UI
             this.updateLayerList();
             this.updateCurrentLayerDropdown();
-            this.commandLine?.print(`Layer "${name}" created and set as current`, 'success');
+            this.commandLine?.print(`Layer "${layerName}" created and set as current`, 'success');
         } else {
             // Layer already exists, just set as current
-            this.renderer.setDrawingLayer(name);
+            this.renderer.setDrawingLayer(layerName);
             this.updateCurrentLayerDropdown();
-            this.commandLine?.print(`Layer "${name}" already exists, set as current`, 'response');
+            this.commandLine?.print(`Layer "${layerName}" already exists, set as current`, 'response');
         }
+    }
+
+    private requestAnnotationText(position: { x: number; y: number }, done: (text: string) => void): void {
+        this.commandLine?.print('Enter annotation text:', 'prompt');
+        this.commandLine?.setPrompt('Text:');
+        this.commandLine?.focus();
+
+        this.commandLine?.setPendingInputHandler((text: string) => {
+            done(text);
+            if (text) {
+                this.commandLine?.print(`Text annotation created at (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`, 'success');
+            } else {
+                this.commandLine?.print('Text annotation cancelled.', 'response');
+            }
+        });
     }
 
     private updateCurrentLayerDropdown(): void {

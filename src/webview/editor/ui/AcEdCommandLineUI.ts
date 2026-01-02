@@ -43,6 +43,9 @@ export class AcEdCommandLineUI implements CommandLineInterface {
     // Simple utility commands (non-CAD commands)
     private simpleCommands: Map<string, SimpleCommandDefinition> = new Map();
 
+    // Pending input handler for special input modes (layer name, text input, etc.)
+    private pendingInputHandler: ((input: string) => void) | null = null;
+
     constructor() {
         this.historyElement = document.getElementById('command-history') as HTMLElement;
         this.inputElement = document.getElementById('command-input') as HTMLInputElement;
@@ -111,6 +114,21 @@ export class AcEdCommandLineUI implements CommandLineInterface {
 
     private executeInput(): void {
         const input = this.inputElement.value.trim();
+
+        // Handle pending input handler (for layer name, text annotation, etc.)
+        if (this.pendingInputHandler) {
+            const handler = this.pendingInputHandler;
+            this.pendingInputHandler = null;
+            this.inputElement.value = '';
+
+            if (input) {
+                this.print(input, 'response');
+            }
+
+            handler(input);
+            this.setPrompt('Command:');
+            return;
+        }
 
         // Empty input handling
         if (!input) {
@@ -378,5 +396,27 @@ export class AcEdCommandLineUI implements CommandLineInterface {
         }
         this.print(commandName, 'command');
         this.parseAndExecute(commandName);
+    }
+
+    /**
+     * Sets a pending input handler for special input modes (layer name, text annotation, etc.)
+     * The handler will be called with the next input and then cleared.
+     */
+    setPendingInputHandler(handler: (input: string) => void): void {
+        this.pendingInputHandler = handler;
+    }
+
+    /**
+     * Clears any pending input handler
+     */
+    clearPendingInputHandler(): void {
+        this.pendingInputHandler = null;
+    }
+
+    /**
+     * Checks if there is a pending input handler
+     */
+    hasPendingInputHandler(): boolean {
+        return this.pendingInputHandler !== null;
     }
 }

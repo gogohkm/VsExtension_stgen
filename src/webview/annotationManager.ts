@@ -27,6 +27,9 @@ export class AnnotationManager {
     private currentType: AnnotationType = 'text';
     private annotationColor: number = 0xff0000;
 
+    // Callback for requesting text input (since prompt() doesn't work in VS Code webview)
+    private textInputCallback: ((position: { x: number; y: number }, callback: (text: string) => void) => void) | null = null;
+
     constructor(
         scene: THREE.Scene,
         annotationGroup: THREE.Group,
@@ -104,6 +107,25 @@ export class AnnotationManager {
 
         switch (type) {
             case 'text':
+                // Use text input callback if available, otherwise use prompt (which may not work in VS Code)
+                if (this.textInputCallback) {
+                    this.textInputCallback({ x, y }, (text: string) => {
+                        if (!text) {
+                            return;
+                        }
+                        annotation.properties.text = text;
+                        const textObject = this.createTextAnnotation(x, y, text, this.annotationColor);
+                        if (textObject) {
+                            textObject.userData.annotationId = id;
+                            this.annotations.set(id, textObject);
+                            this.annotationData.set(id, annotation);
+                            this.annotationGroup.add(textObject);
+                            this.renderCallback();
+                        }
+                    });
+                    return; // Return early - the callback will handle creation
+                }
+                // Fallback to prompt (may not work in VS Code webview)
                 const text = prompt('Enter annotation text:', 'Note');
                 if (!text) {
                     return;
@@ -332,6 +354,14 @@ export class AnnotationManager {
 
     setColor(color: number): void {
         this.annotationColor = color;
+    }
+
+    /**
+     * Sets a callback for requesting text input from the user.
+     * This is needed because prompt() doesn't work in VS Code webview.
+     */
+    setTextInputCallback(callback: (position: { x: number; y: number }, done: (text: string) => void) => void): void {
+        this.textInputCallback = callback;
     }
 
     private generateId(): string {
