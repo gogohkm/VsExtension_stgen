@@ -6,8 +6,8 @@
 
 import { DxfRenderer } from '../dxfRenderer';
 import { CommandLineInterface } from './command/AcEdCommand';
-import { AcEdPromptPointOptions, AcEdPromptDistanceOptions, AcEdPromptSelectionOptions, formatKeywords, matchKeyword } from './input/prompt/AcEdPromptOptions';
-import { AcEdPromptPointResult, AcEdPromptDistanceResult, AcEdPromptSelectionResult, PromptStatus } from './input/prompt/AcEdPromptResult';
+import { AcEdPromptPointOptions, AcEdPromptDistanceOptions, AcEdPromptSelectionOptions, AcEdPromptEntityOptions, formatKeywords, matchKeyword } from './input/prompt/AcEdPromptOptions';
+import { AcEdPromptPointResult, AcEdPromptDistanceResult, AcEdPromptSelectionResult, AcEdPromptEntityResult, PromptStatus } from './input/prompt/AcEdPromptResult';
 import { parseCoordinate, isCoordinateInput, isNumberInput, parseNumber, formatPoint, Point2D, distance } from './input/handler/AcEdPointHandler';
 
 /**
@@ -18,7 +18,8 @@ enum InputMode {
     Point,
     Distance,
     String,
-    Selection
+    Selection,
+    Entity
 }
 
 /**
@@ -33,6 +34,7 @@ export class AcEditor {
     private inputReject: ((reason: any) => void) | null = null;
     private currentOptions: any = null;
     private basePoint: Point2D | null = null;
+    private lastClickPoint: Point2D | null = null;
 
     // Callbacks from UI
     private onMouseClick: ((point: Point2D) => void) | null = null;
@@ -132,6 +134,28 @@ export class AcEditor {
     }
 
     /**
+     * Gets a single entity from user click
+     * Returns the entity and the pick point for TRIM/EXTEND operations
+     */
+    async getEntity(options: AcEdPromptEntityOptions = {}): Promise<AcEdPromptEntityResult> {
+        return new Promise((resolve, reject) => {
+            this.inputMode = InputMode.Entity;
+            this.inputResolve = resolve;
+            this.inputReject = reject;
+            this.currentOptions = options;
+
+            // Enable entity selection mode in renderer
+            this.renderer.setCommandInputMode(true);
+            this.renderer.setEntitySelectionMode(true);
+
+            // Show prompt
+            const message = options.message || 'Select object';
+            this.commandLine.setPrompt(`${message}:`);
+            this.commandLine.focus();
+        });
+    }
+
+    /**
      * Handles text input from command line
      */
     handleTextInput(input: string): void {
@@ -178,6 +202,10 @@ export class AcEditor {
                 // In selection mode, any non-keyword input should not happen
                 // as users only click to select. But if they type, ignore it.
                 this.commandLine.print('Click to select objects, press Enter when done', 'response');
+                break;
+            case InputMode.Entity:
+                // In entity mode, users click to select. Ignore text input.
+                this.commandLine.print('Click on an object to select it', 'response');
                 break;
         }
     }
@@ -263,6 +291,24 @@ export class AcEditor {
                 const count = this.renderer.getSelectedCount();
                 this.commandLine.print(`${count} object(s) selected`, 'response');
                 break;
+
+            case InputMode.Entity:
+                // In entity mode, pick entity at click point
+                this.lastClickPoint = worldPoint;
+                const entity = this.renderer.pickEntityAtPoint(worldPoint);
+                if (entity) {
+                    this.resolveInput({
+                        status: PromptStatus.OK,
+                        value: {
+                            entity: entity,
+                            pickPoint: worldPoint
+                        }
+                    });
+                } else {
+                    // No entity at this point
+                    this.commandLine.print('No object at this point', 'response');
+                }
+                break;
         }
     }
 
@@ -308,6 +354,12 @@ export class AcEditor {
             this.renderer.setCommandInputMode(false);
             // Clear ortho base point when input is resolved
             this.renderer.setOrthoBasePoint(null);
+        }
+
+        // Disable entity selection mode if it was enabled
+        if (this.inputMode === InputMode.Entity) {
+            this.renderer.setCommandInputMode(false);
+            this.renderer.setEntitySelectionMode(false);
         }
 
         // Reset state

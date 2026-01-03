@@ -561,6 +561,9 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
             <div class="context-menu-item" data-command="ERASE"><span class="menu-text">Erase</span><span class="menu-shortcut">E</span></div>
             <div class="context-menu-item" data-command="MOVE"><span class="menu-text">Move</span><span class="menu-shortcut">M</span></div>
             <div class="context-menu-item" data-command="COPY"><span class="menu-text">Copy</span><span class="menu-shortcut">CO</span></div>
+            <div class="context-menu-item" data-command="TRIM"><span class="menu-text">Trim</span><span class="menu-shortcut">TR</span></div>
+            <div class="context-menu-item" data-command="EXTEND"><span class="menu-text">Extend</span><span class="menu-shortcut">EX</span></div>
+            <div class="context-menu-item" data-command="OFFSET"><span class="menu-text">Offset</span><span class="menu-shortcut">O</span></div>
         </div>
         <div class="context-menu-separator"></div>
         <div class="context-menu-section">

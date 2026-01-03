@@ -70,6 +70,18 @@ export interface AcEdPromptSelectionOptions {
     singleOnly?: boolean;
     /** Minimum number of entities required */
     minCount?: number;
+    /** Allow empty input (Enter without selection) */
+    allowNone?: boolean;
+}
+
+/**
+ * Options for single entity selection prompt (for TRIM, EXTEND, etc.)
+ */
+export interface AcEdPromptEntityOptions {
+    /** Message shown to user */
+    message?: string;
+    /** Allow empty input (Enter without selection) */
+    allowNone?: boolean;
 }
 
 /**

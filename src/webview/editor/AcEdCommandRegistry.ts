@@ -15,6 +15,9 @@ import { AcDistanceCmd } from '../commands/AcDistanceCmd';
 import { AcEraseCmd } from '../commands/AcEraseCmd';
 import { AcMoveCmd } from '../commands/AcMoveCmd';
 import { AcCopyCmd } from '../commands/AcCopyCmd';
+import { AcTrimCmd } from '../commands/AcTrimCmd';
+import { AcExtendCmd } from '../commands/AcExtendCmd';
+import { AcOffsetCmd } from '../commands/AcOffsetCmd';
 import { AcDimCmd, AcDimHorCmd, AcDimVerCmd, AcDimAlignedCmd, AcDimAngularCmd } from '../commands/AcDimCmd';
 import { AcZoomCmd, AcZoomWindowCmd, AcZoomExtentsCmd, AcZoomAllCmd } from '../commands/AcZoomCmd';
 
@@ -33,6 +36,9 @@ import { AcZoomCmd, AcZoomWindowCmd, AcZoomExtentsCmd, AcZoomAllCmd } from '../c
  * - MOVE (M): Move selected entities
  * - COPY (CO): Copy selected entities
  * - ERASE (E): Delete selected entities
+ * - TRIM (TR): Trim objects to cutting edges
+ * - EXTEND (EX): Extend objects to boundary edges
+ * - OFFSET (O): Create parallel copies at a distance
  *
  * Annotation Commands:
  * - DIM (DLI): Create linear dimensions (auto-detect H/V)
@@ -71,6 +77,9 @@ export function registerCadCommands(): void {
     safeAdd('ACAD', 'MOVE', 'M', new AcMoveCmd());
     safeAdd('ACAD', 'COPY', 'CO', new AcCopyCmd());
     safeAdd('ACAD', 'ERASE', 'E', new AcEraseCmd());
+    safeAdd('ACAD', 'TRIM', 'TR', new AcTrimCmd());
+    safeAdd('ACAD', 'EXTEND', 'EX', new AcExtendCmd());
+    safeAdd('ACAD', 'OFFSET', 'O', new AcOffsetCmd());
 
     // Annotation commands - Dimensions
     safeAdd('ACAD', 'DIM', 'DLI', new AcDimCmd());

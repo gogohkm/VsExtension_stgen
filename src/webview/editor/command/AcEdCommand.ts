@@ -43,6 +43,7 @@ export interface AcEditorInterface {
     getPoint(options: any): Promise<any>;
     getDistance(options: any): Promise<any>;
     getSelection(options?: any): Promise<any>;
+    getEntity(options?: any): Promise<any>;
     handleTextInput(input: string): void;
     handleMouseClick(worldPoint: { x: number; y: number }): void;
     handleMouseMove(worldPoint: { x: number; y: number }): void;

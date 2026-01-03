@@ -54,3 +54,16 @@ export interface AcEdPromptSelectionResult {
     value?: any[];
     keyword?: string;
 }
+
+/**
+ * Result of a single entity selection prompt (for TRIM, EXTEND, etc.)
+ */
+export interface AcEdPromptEntityResult {
+    status: PromptStatus;
+    /** Selected entity and pick point */
+    value?: {
+        entity: any;  // THREE.Object3D
+        pickPoint: { x: number; y: number };
+    };
+    keyword?: string;
+}

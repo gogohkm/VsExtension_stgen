@@ -237,6 +237,7 @@ export class DxfRenderer {
     private originalMaterials: Map<THREE.Object3D, THREE.Material | THREE.Material[]> = new Map();
     private commandSelectionMode: boolean = false; // When true, clicking empty space doesn't clear selection
     private commandInputMode: boolean = false; // When true, clicks don't affect selection at all (point input mode)
+    private entitySelectionMode: boolean = false; // When true, single entity picking is active (for TRIM, EXTEND, etc.)
 
     // Material cache for performance
     private materialCache: MaterialCache = new MaterialCache();
@@ -2484,6 +2485,22 @@ export class DxfRenderer {
     }
 
     /**
+     * Gets all visible entities as THREE.Object3D array
+     * Used for TRIM/EXTEND commands when no cutting edges are selected
+     */
+    getAllVisibleEntities(): THREE.Object3D[] {
+        const entities: THREE.Object3D[] = [];
+
+        this.entityGroup.traverse((object) => {
+            if (object.userData.entity && object.visible) {
+                entities.push(object);
+            }
+        });
+
+        return entities;
+    }
+
+    /**
      * Gets all entities in the drawing as DxfEntity array
      * Used for saving the drawing to DXF file
      */
@@ -2530,6 +2547,59 @@ export class DxfRenderer {
      */
     isCommandInputMode(): boolean {
         return this.commandInputMode;
+    }
+
+    /**
+     * Sets entity selection mode.
+     * When enabled, single entity picking is active (for TRIM, EXTEND, etc.)
+     */
+    setEntitySelectionMode(enabled: boolean): void {
+        this.entitySelectionMode = enabled;
+    }
+
+    /**
+     * Gets whether entity selection mode is active
+     */
+    isEntitySelectionMode(): boolean {
+        return this.entitySelectionMode;
+    }
+
+    /**
+     * Pick entity at a world point
+     * Returns the closest entity to the pick point, or null if none found
+     */
+    pickEntityAtPoint(worldPoint: { x: number; y: number }): THREE.Object3D | null {
+        // Convert world point to screen coords for raycasting
+        const screenPoint = this.worldToScreen(worldPoint.x, worldPoint.y);
+        if (!screenPoint) return null;
+
+        // Create raycaster
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(
+            (screenPoint.x / this.container.clientWidth) * 2 - 1,
+            -(screenPoint.y / this.container.clientHeight) * 2 + 1
+        );
+
+        raycaster.setFromCamera(mouse, this.camera);
+        raycaster.params.Line = { threshold: 5 / this.camera.zoom };
+        raycaster.params.Points = { threshold: 5 / this.camera.zoom };
+
+        // Get all intersections
+        const intersects = raycaster.intersectObjects(this.entityGroup.children, true);
+
+        // Find closest entity
+        for (const intersect of intersects) {
+            let object = intersect.object;
+            // Walk up to find entity parent
+            while (object.parent && !object.userData.entity && object.parent !== this.entityGroup) {
+                object = object.parent;
+            }
+            if (object.userData.entity) {
+                return object;
+            }
+        }
+
+        return null;
     }
 
     // ========== Entity Deletion ==========
@@ -3479,6 +3549,19 @@ export class DxfRenderer {
         const worldY = this.viewCenter.y + (0.5 - y / this.container.clientHeight) * this.viewWidth / aspect;
 
         return { x: worldX, y: worldY };
+    }
+
+    /**
+     * Converts world coordinates to screen coordinates (relative to container)
+     */
+    worldToScreen(worldX: number, worldY: number): { x: number; y: number } | null {
+        const aspect = this.container.clientWidth / this.container.clientHeight;
+
+        // Inverse of screenToWorld calculation
+        const x = ((worldX - this.viewCenter.x) / this.viewWidth + 0.5) * this.container.clientWidth;
+        const y = (0.5 - (worldY - this.viewCenter.y) * aspect / this.viewWidth) * this.container.clientHeight;
+
+        return { x, y };
     }
 
     private handleLineDrawingClick(worldPos: { x: number; y: number }): DxfEntity | null {
