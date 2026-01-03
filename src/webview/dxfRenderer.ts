@@ -214,6 +214,7 @@ export class DxfRenderer {
     private gridGroup: THREE.Group;
     private parsedDxf: ParsedDxf | null = null;
     private layerVisibility: Map<string, boolean> = new Map();
+    private layerLocked: Map<string, boolean> = new Map();
 
     // Pan/zoom state
     private isDragging = false;
@@ -1876,7 +1877,17 @@ export class DxfRenderer {
         return new Map(this.layerVisibility);
     }
 
-    getLayers(): Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string; lineWeight: number }> {
+    setLayerLocked(layerName: string, locked: boolean): void {
+        this.layerLocked.set(layerName, locked);
+        // Note: locked layers can still be viewed, just not edited
+        // Visual feedback could be added here (e.g., change entity opacity)
+    }
+
+    isLayerLocked(layerName: string): boolean {
+        return this.layerLocked.get(layerName) ?? false;
+    }
+
+    getLayers(): Array<{ name: string; color: number; colorIndex: number; visible: boolean; locked: boolean; entityCount: number; lineType: string; lineWeight: number }> {
         if (!this.parsedDxf) {
             return [];
         }
@@ -1888,7 +1899,7 @@ export class DxfRenderer {
             entityCounts.set(entity.layer, count + 1);
         }
 
-        const layers: Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string; lineWeight: number }> = [];
+        const layers: Array<{ name: string; color: number; colorIndex: number; visible: boolean; locked: boolean; entityCount: number; lineType: string; lineWeight: number }> = [];
 
         // Add default layer if it has entities
         if (entityCounts.has('0') && !this.parsedDxf.layers.has('0')) {
@@ -1897,6 +1908,7 @@ export class DxfRenderer {
                 color: 0xffffff,
                 colorIndex: 7,
                 visible: this.layerVisibility.get('0') ?? true,
+                locked: this.layerLocked.get('0') ?? false,
                 entityCount: entityCounts.get('0') || 0,
                 lineType: 'CONTINUOUS',
                 lineWeight: 0.25 // Default
@@ -1910,6 +1922,7 @@ export class DxfRenderer {
                 color: aciToColor(layer.color),
                 colorIndex: layer.color,
                 visible: this.layerVisibility.get(name) ?? true,
+                locked: this.layerLocked.get(name) ?? false,
                 entityCount: entityCounts.get(name) || 0,
                 lineType: layer.lineType || 'CONTINUOUS',
                 lineWeight: layer.lineWeight ?? 0.25
@@ -1924,6 +1937,7 @@ export class DxfRenderer {
                     color: 0xffffff,
                     colorIndex: 7,
                     visible: this.layerVisibility.get(layerName) ?? true,
+                    locked: this.layerLocked.get(layerName) ?? false,
                     entityCount: count,
                     lineType: 'CONTINUOUS',
                     lineWeight: 0.25
@@ -1947,6 +1961,70 @@ export class DxfRenderer {
                 object.visible = visible;
             }
         });
+
+        this.render();
+    }
+
+    createLayer(name: string, options: { visible?: boolean; frozen?: boolean; locked?: boolean; color?: string; lineWeight?: number } = {}): void {
+        if (!this.parsedDxf) return;
+
+        // Check if layer already exists
+        if (this.parsedDxf.layers.has(name)) {
+            return;
+        }
+
+        // Convert hex color to ACI (simplified - use white=7 as default)
+        let colorIndex = 7;
+        if (options.color) {
+            // Simplified color mapping for common colors
+            const colorMap: { [key: string]: number } = {
+                '#ff0000': 1, '#ffff00': 2, '#00ff00': 3, '#00ffff': 4,
+                '#0000ff': 5, '#ff00ff': 6, '#ffffff': 7, '#808080': 8, '#c0c0c0': 9
+            };
+            colorIndex = colorMap[options.color.toLowerCase()] || 7;
+        }
+
+        // Create layer entry
+        const layerData = {
+            name: name,
+            color: colorIndex,
+            lineType: 'CONTINUOUS',
+            lineWeight: options.lineWeight ?? 0.25,
+            flags: 0,
+            frozen: options.frozen ?? false,
+            off: !(options.visible ?? true)
+        };
+
+        this.parsedDxf.layers.set(name, layerData);
+        this.layerVisibility.set(name, options.visible ?? true);
+    }
+
+    deleteLayer(name: string): void {
+        if (!this.parsedDxf) return;
+
+        // Cannot delete layer 0
+        if (name === '0') return;
+
+        // Check if layer exists
+        if (!this.parsedDxf.layers.has(name)) return;
+
+        // Move all entities from this layer to layer 0
+        for (const entity of this.parsedDxf.entities) {
+            if (entity.layer === name) {
+                entity.layer = '0';
+            }
+        }
+
+        // Update 3D objects
+        this.entityGroup.traverse((object) => {
+            if (object.userData.layer === name) {
+                object.userData.layer = '0';
+            }
+        });
+
+        // Delete the layer
+        this.parsedDxf.layers.delete(name);
+        this.layerVisibility.delete(name);
 
         this.render();
     }

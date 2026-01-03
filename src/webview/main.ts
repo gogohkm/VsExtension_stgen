@@ -652,19 +652,9 @@ class DxfViewerApp {
         btnLine?.classList.toggle('active', mode === DrawingMode.LINE);
         btnCircle?.classList.toggle('active', mode === DrawingMode.CIRCLE);
 
+        // Hide indicator - drawing mode info is shown in command line instead
         if (indicator) {
-            if (mode !== DrawingMode.NONE) {
-                const modeNames: Record<DrawingMode, string> = {
-                    [DrawingMode.NONE]: '',
-                    [DrawingMode.LINE]: 'Drawing Line - Click to set points (Esc to cancel)',
-                    [DrawingMode.CIRCLE]: 'Drawing Circle - Click center, then radius (Esc to cancel)',
-                    [DrawingMode.POLYLINE]: 'Drawing Polyline (Esc to cancel)'
-                };
-                indicator.textContent = modeNames[mode];
-                indicator.classList.add('visible');
-            } else {
-                indicator.classList.remove('visible');
-            }
+            indicator.classList.remove('visible');
         }
     }
 
@@ -1454,14 +1444,41 @@ class DxfViewerApp {
             }
         });
 
-        // Lock button (placeholder - lock functionality can be added later)
+        // Lock button
         document.getElementById('layer-toolbar-lock')?.addEventListener('click', () => {
-            this.commandLine?.print('Layer lock/unlock not yet implemented', 'response');
+            const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+            const layerName = select?.value;
+            if (this.renderer && layerName) {
+                const isLocked = this.renderer.isLayerLocked(layerName);
+                this.renderer.setLayerLocked(layerName, !isLocked);
+                this.updateLayerToolbar();
+                this.commandLine?.print(`Layer ${layerName} ${isLocked ? 'unlocked' : 'locked'}`, 'response');
+            }
+        });
+
+        // Color box click - show color picker
+        document.getElementById('layer-toolbar-color')?.addEventListener('click', () => {
+            this.showLayerColorPicker();
+        });
+
+        // Lineweight click - show lineweight options
+        document.getElementById('layer-toolbar-lineweight')?.addEventListener('click', () => {
+            this.showLayerLineweightPicker();
         });
 
         // Layer Manager button - opens layer panel
         document.getElementById('layer-toolbar-manager')?.addEventListener('click', () => {
             this.toggleLayerPanel(true);
+        });
+
+        // Add Layer button
+        document.getElementById('layer-toolbar-add')?.addEventListener('click', () => {
+            this.showAddLayerDialog();
+        });
+
+        // Delete Layer button
+        document.getElementById('layer-toolbar-delete')?.addEventListener('click', () => {
+            this.deleteCurrentLayer();
         });
     }
 
@@ -1529,22 +1546,14 @@ class DxfViewerApp {
             onBtn?.classList.toggle('active', !currentLayerData.visible);
             freezeBtn?.classList.toggle('active', !currentLayerData.visible);
 
-            // Update color display
+            // Update color display - color is hex number (0xrrggbb)
             if (colorBox) {
-                const rawColor = currentLayerData.color;
-                let displayColor = '#ffffff';
-                // Handle color - can be string hex or number (ACI code)
-                if (typeof rawColor === 'number') {
-                    // ACI color code - convert to hex (simplified)
-                    const aciColors: { [key: number]: string } = {
-                        1: '#ff0000', 2: '#ffff00', 3: '#00ff00', 4: '#00ffff',
-                        5: '#0000ff', 6: '#ff00ff', 7: '#ffffff', 8: '#808080', 9: '#c0c0c0'
-                    };
-                    displayColor = aciColors[rawColor] || '#ffffff';
-                } else if (typeof rawColor === 'string') {
-                    displayColor = rawColor;
-                }
+                const hexColor = currentLayerData.color;
+                // Convert number to CSS hex string
+                const displayColor = '#' + hexColor.toString(16).padStart(6, '0');
                 colorBox.style.backgroundColor = displayColor;
+                // Store colorIndex for later use
+                (colorBox as HTMLElement).dataset.colorIndex = currentLayerData.colorIndex.toString();
             }
 
             // Update lineweight display
@@ -1552,6 +1561,10 @@ class DxfViewerApp {
                 const lw = currentLayerData.lineWeight ?? 0.25;
                 lineweightSpan.textContent = lw.toFixed(2);
             }
+
+            // Update lock button state
+            const lockBtn = document.getElementById('layer-toolbar-lock');
+            lockBtn?.classList.toggle('active', currentLayerData.locked);
         }
     }
 
@@ -1560,6 +1573,175 @@ class DxfViewerApp {
         if (toolbar?.classList.contains('visible')) {
             this.updateLayerToolbar();
         }
+    }
+
+    private deleteCurrentLayer(): void {
+        if (!this.renderer) return;
+
+        const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+        const layerName = select?.value;
+
+        if (!layerName) {
+            this.commandLine?.print('No layer selected', 'error');
+            return;
+        }
+
+        // Cannot delete layer 0
+        if (layerName === '0') {
+            this.commandLine?.print('Cannot delete layer 0', 'error');
+            return;
+        }
+
+        const layers = this.renderer.getLayers();
+        if (layers.length <= 1) {
+            this.commandLine?.print('Cannot delete the last layer', 'error');
+            return;
+        }
+
+        // Confirm deletion
+        if (!confirm(`Delete layer "${layerName}"? Entities on this layer will be moved to layer 0.`)) {
+            return;
+        }
+
+        // Delete the layer
+        this.renderer.deleteLayer(layerName);
+
+        // Switch to layer 0
+        this.renderer.setDrawingLayer('0');
+
+        this.commandLine?.print(`Layer "${layerName}" deleted`, 'success');
+
+        // Refresh toolbar and panel
+        this.refreshLayerToolbarIfVisible();
+        this.updateLayerList();
+    }
+
+    private showLayerColorPicker(): void {
+        const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+        const layerName = select?.value;
+        if (!this.renderer || !layerName) return;
+
+        // ACI color options
+        const aciColors: { index: number; name: string; hex: string }[] = [
+            { index: 1, name: 'Red', hex: '#ff0000' },
+            { index: 2, name: 'Yellow', hex: '#ffff00' },
+            { index: 3, name: 'Green', hex: '#00ff00' },
+            { index: 4, name: 'Cyan', hex: '#00ffff' },
+            { index: 5, name: 'Blue', hex: '#0000ff' },
+            { index: 6, name: 'Magenta', hex: '#ff00ff' },
+            { index: 7, name: 'White', hex: '#ffffff' },
+            { index: 8, name: 'Gray', hex: '#808080' },
+            { index: 9, name: 'Light Gray', hex: '#c0c0c0' }
+        ];
+
+        // Create color picker popup
+        const existingPopup = document.getElementById('layer-color-popup');
+        if (existingPopup) existingPopup.remove();
+
+        const popup = document.createElement('div');
+        popup.id = 'layer-color-popup';
+        popup.className = 'layer-popup';
+        popup.innerHTML = `
+            <div class="layer-popup-title">Select Color</div>
+            <div class="layer-color-grid">
+                ${aciColors.map(c => `
+                    <div class="layer-color-option" data-index="${c.index}" title="${c.name}"
+                         style="background-color: ${c.hex}"></div>
+                `).join('')}
+            </div>
+        `;
+
+        // Position popup below color box
+        const colorBox = document.getElementById('layer-toolbar-color');
+        if (colorBox) {
+            const rect = colorBox.getBoundingClientRect();
+            popup.style.position = 'absolute';
+            popup.style.left = `${rect.left}px`;
+            popup.style.top = `${rect.bottom + 4}px`;
+        }
+
+        document.body.appendChild(popup);
+
+        // Handle color selection
+        popup.querySelectorAll('.layer-color-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                const index = parseInt((e.target as HTMLElement).dataset.index || '7');
+                this.renderer?.setLayerColor(layerName, index);
+                this.updateLayerToolbar();
+                this.updateLayerList();
+                this.commandLine?.print(`Layer ${layerName} color changed`, 'response');
+                popup.remove();
+            });
+        });
+
+        // Close on click outside
+        const closeHandler = (e: MouseEvent) => {
+            if (!popup.contains(e.target as Node) && e.target !== colorBox) {
+                popup.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler), 0);
+    }
+
+    private showLayerLineweightPicker(): void {
+        const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+        const layerName = select?.value;
+        if (!this.renderer || !layerName) return;
+
+        // Standard lineweight options
+        const lineweights = [0.00, 0.05, 0.09, 0.13, 0.15, 0.18, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.53, 0.60, 0.70, 0.80, 0.90, 1.00, 1.06, 1.20, 1.40, 1.58, 2.00, 2.11];
+
+        // Create lineweight picker popup
+        const existingPopup = document.getElementById('layer-lineweight-popup');
+        if (existingPopup) existingPopup.remove();
+
+        const popup = document.createElement('div');
+        popup.id = 'layer-lineweight-popup';
+        popup.className = 'layer-popup';
+        popup.innerHTML = `
+            <div class="layer-popup-title">Select Line Weight (mm)</div>
+            <div class="layer-lineweight-list">
+                ${lineweights.map(lw => `
+                    <div class="layer-lineweight-option" data-lw="${lw}">
+                        <span class="lw-preview" style="height: ${Math.max(1, lw * 3)}px"></span>
+                        <span class="lw-value">${lw.toFixed(2)}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        // Position popup below lineweight span
+        const lwSpan = document.getElementById('layer-toolbar-lineweight');
+        if (lwSpan) {
+            const rect = lwSpan.getBoundingClientRect();
+            popup.style.position = 'absolute';
+            popup.style.left = `${rect.left}px`;
+            popup.style.top = `${rect.bottom + 4}px`;
+        }
+
+        document.body.appendChild(popup);
+
+        // Handle lineweight selection
+        popup.querySelectorAll('.layer-lineweight-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                const lw = parseFloat((e.currentTarget as HTMLElement).dataset.lw || '0.25');
+                this.renderer?.setLayerLineWeight(layerName, lw);
+                this.updateLayerToolbar();
+                this.updateLayerList();
+                this.commandLine?.print(`Layer ${layerName} lineweight changed to ${lw.toFixed(2)}`, 'response');
+                popup.remove();
+            });
+        });
+
+        // Close on click outside
+        const closeHandler = (e: MouseEvent) => {
+            if (!popup.contains(e.target as Node) && e.target !== lwSpan) {
+                popup.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler), 0);
     }
 
     private toggleSnapPanel(visible?: boolean): void {
@@ -1912,6 +2094,7 @@ class DxfViewerApp {
                 }
 
                 this.updateLayerList();
+                this.toggleLayerToolbar(true);
                 this.setStatus(`New drawing: ${fileName}`);
                 this.commandLine?.print('New drawing created. Use LINE, CIRCLE, etc. to draw.', 'success');
 
@@ -1942,6 +2125,9 @@ class DxfViewerApp {
                 // Update layer panel if visible
                 this.updateLayerList();
 
+                // Show layer toolbar by default
+                this.toggleLayerToolbar(true);
+
                 const entityCount = this.parsedDxf.entities.length;
                 const layerCount = this.parsedDxf.layers.size;
                 const blockCount = this.parsedDxf.blocks.size;
@@ -1968,6 +2154,7 @@ class DxfViewerApp {
             }
 
             this.updateLayerList();
+            this.toggleLayerToolbar(true);
             this.setStatus(`New drawing: ${fileName} (parse error, started fresh)`);
             this.commandLine?.print('Could not parse file. Created new drawing.', 'response');
 
@@ -2082,6 +2269,7 @@ class DxfViewerApp {
         }
 
         this.updateLayerList();
+        this.toggleLayerToolbar(true);
         this.setStatus('New drawing');
         this.commandLine?.print('New drawing created', 'success');
     }

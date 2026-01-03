@@ -448,6 +448,13 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
             <span>🔒</span>
         </button>
         <div class="layer-toolbar-separator"></div>
+        <button class="layer-toolbar-btn layer-toolbar-btn-add" id="layer-toolbar-add" title="New Layer">
+            <span>+</span>
+        </button>
+        <button class="layer-toolbar-btn layer-toolbar-btn-delete" id="layer-toolbar-delete" title="Delete Layer">
+            <span>−</span>
+        </button>
+        <div class="layer-toolbar-separator"></div>
         <button class="layer-toolbar-btn" id="layer-toolbar-manager" title="Layer Manager">
             <span>⚙</span>
         </button>

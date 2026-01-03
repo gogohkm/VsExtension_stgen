@@ -226,6 +226,38 @@ html, body {
     border-color: #007acc;
 }
 
+.layer-toolbar-btn-add {
+    font-size: 16px;
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+.layer-toolbar-btn-add:hover {
+    background-color: #2d5a4a;
+    border-color: #4ec9b0;
+}
+
+.layer-toolbar-btn-delete {
+    font-size: 16px;
+    font-weight: bold;
+    color: #f14c4c;
+}
+
+.layer-toolbar-btn-delete:hover {
+    background-color: #5a2d2d;
+    border-color: #f14c4c;
+}
+
+.layer-toolbar-btn-delete:disabled {
+    color: #666666;
+    cursor: not-allowed;
+}
+
+.layer-toolbar-btn-delete:disabled:hover {
+    background-color: transparent;
+    border-color: transparent;
+}
+
 .layer-toolbar-separator {
     width: 1px;
     height: 18px;
@@ -304,6 +336,76 @@ html, body {
     color: #fff;
     background-color: #c42b1c;
     border-radius: 3px;
+}
+
+/* Layer popup styles */
+.layer-popup {
+    background-color: #2d2d2d;
+    border: 1px solid #5a5a5a;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    z-index: 10000;
+    padding: 8px;
+    min-width: 120px;
+}
+
+.layer-popup-title {
+    color: #aaa;
+    font-size: 11px;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #444;
+}
+
+.layer-color-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+}
+
+.layer-color-option {
+    width: 28px;
+    height: 20px;
+    border: 1px solid #666;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.layer-color-option:hover {
+    transform: scale(1.15);
+    border-color: #fff;
+    z-index: 1;
+}
+
+.layer-lineweight-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.layer-lineweight-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
+.layer-lineweight-option:hover {
+    background-color: #3a3a3a;
+}
+
+.layer-lineweight-option .lw-preview {
+    width: 40px;
+    background-color: #ccc;
+    min-height: 1px;
+}
+
+.layer-lineweight-option .lw-value {
+    color: #ccc;
+    font-size: 11px;
+    min-width: 35px;
 }
 
 /* Adjust viewer container when layer toolbar is visible */
