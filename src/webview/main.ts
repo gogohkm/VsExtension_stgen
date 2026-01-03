@@ -80,6 +80,7 @@ class DxfViewerApp {
         this.setupToolbarEvents();
         this.setupContextMenu();
         this.setupLayerPanel();
+        this.setupLayerToolbar();
         this.setupPropertiesPanel();
         this.setupSnapPanel();
         this.setupCommandPanelResize();
@@ -412,17 +413,16 @@ class DxfViewerApp {
             }
         });
 
-        // LAYER command
+        // LAYER command - toggles layer toolbar at top of screen
         this.commandLine.registerSimpleCommand({
             name: 'LAYER',
             aliases: ['LA'],
-            description: 'Open layer panel',
+            description: 'Toggle layer toolbar',
             execute: () => {
-                const layerPanel = document.getElementById('layer-panel');
-                if (layerPanel) {
-                    layerPanel.classList.toggle('visible');
-                    this.commandLine?.print('Layer panel toggled', 'success');
-                }
+                this.toggleLayerToolbar();
+                const toolbar = document.getElementById('layer-toolbar');
+                const isVisible = toolbar?.classList.contains('visible');
+                this.commandLine?.print(isVisible ? 'Layer toolbar opened' : 'Layer toolbar closed', 'success');
             }
         });
 
@@ -1317,14 +1317,16 @@ class DxfViewerApp {
         if (added) {
             // Set as current layer
             this.renderer.setDrawingLayer(layerName);
-            // Update UI
+            // Update UI - including layer toolbar
             this.updateLayerList();
             this.updateCurrentLayerDropdown();
+            this.refreshLayerToolbarIfVisible();
             this.commandLine?.print(`Layer "${layerName}" created and set as current`, 'success');
         } else {
             // Layer already exists, just set as current
             this.renderer.setDrawingLayer(layerName);
             this.updateCurrentLayerDropdown();
+            this.refreshLayerToolbarIfVisible();
             this.commandLine?.print(`Layer "${layerName}" already exists, set as current`, 'response');
         }
     }
@@ -1397,6 +1399,166 @@ class DxfViewerApp {
         if (panel?.classList.contains('visible')) {
             this.updateLayerList();
             this.updateCurrentLayerDropdown();
+        }
+        // Also refresh toolbar if visible
+        this.refreshLayerToolbarIfVisible();
+    }
+
+    // ========== Layer Toolbar (AutoCAD style) ==========
+
+    private setupLayerToolbar(): void {
+        // Close button
+        document.getElementById('layer-toolbar-close')?.addEventListener('click', () => {
+            this.toggleLayerToolbar(false);
+        });
+
+        // Layer select dropdown
+        document.getElementById('layer-toolbar-select')?.addEventListener('change', (e) => {
+            const select = e.target as HTMLSelectElement;
+            const layerName = select.value;
+            if (this.renderer && layerName) {
+                this.renderer.setDrawingLayer(layerName);
+                // Update color and lineweight display for selected layer
+                this.updateLayerToolbar();
+                this.commandLine?.print(`Current layer: ${layerName}`, 'success');
+            }
+        });
+
+        // Layer On/Off button
+        document.getElementById('layer-toolbar-on')?.addEventListener('click', () => {
+            const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+            const layerName = select?.value;
+            if (this.renderer && layerName) {
+                const layers = this.renderer.getLayers();
+                const layer = layers.find(l => l.name === layerName);
+                if (layer) {
+                    this.renderer.setLayerVisibility(layerName, !layer.visible);
+                    this.updateLayerToolbar();
+                    this.commandLine?.print(`Layer ${layerName} ${layer.visible ? 'off' : 'on'}`, 'response');
+                }
+            }
+        });
+
+        // Freeze button (same as on/off for now)
+        document.getElementById('layer-toolbar-freeze')?.addEventListener('click', () => {
+            const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+            const layerName = select?.value;
+            if (this.renderer && layerName) {
+                const layers = this.renderer.getLayers();
+                const layer = layers.find(l => l.name === layerName);
+                if (layer) {
+                    this.renderer.setLayerVisibility(layerName, !layer.visible);
+                    this.updateLayerToolbar();
+                    this.commandLine?.print(`Layer ${layerName} ${layer.visible ? 'frozen' : 'thawed'}`, 'response');
+                }
+            }
+        });
+
+        // Lock button (placeholder - lock functionality can be added later)
+        document.getElementById('layer-toolbar-lock')?.addEventListener('click', () => {
+            this.commandLine?.print('Layer lock/unlock not yet implemented', 'response');
+        });
+
+        // Layer Manager button - opens layer panel
+        document.getElementById('layer-toolbar-manager')?.addEventListener('click', () => {
+            this.toggleLayerPanel(true);
+        });
+    }
+
+    private toggleLayerToolbar(visible?: boolean): void {
+        const toolbar = document.getElementById('layer-toolbar');
+        const viewerContainer = document.getElementById('viewer-container');
+
+        if (!toolbar) return;
+
+        if (visible === undefined) {
+            toolbar.classList.toggle('visible');
+        } else if (visible) {
+            toolbar.classList.add('visible');
+        } else {
+            toolbar.classList.remove('visible');
+        }
+
+        const isVisible = toolbar.classList.contains('visible');
+
+        // Adjust viewer container position
+        if (isVisible) {
+            viewerContainer?.classList.add('with-layer-toolbar');
+            this.updateLayerToolbar();
+        } else {
+            viewerContainer?.classList.remove('with-layer-toolbar');
+        }
+    }
+
+    private updateLayerToolbar(): void {
+        const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+        const countSpan = document.getElementById('layer-toolbar-count');
+        const colorBox = document.getElementById('layer-toolbar-color');
+        const lineweightSpan = document.getElementById('layer-toolbar-lineweight');
+
+        if (!select || !this.renderer) return;
+
+        const layers = this.renderer.getLayers();
+        const currentLayer = this.renderer.getCurrentDrawingLayer();
+
+        // Update dropdown
+        select.innerHTML = '';
+        for (const layer of layers) {
+            const option = document.createElement('option');
+            option.value = layer.name;
+            // Show visibility status with icon
+            const visIcon = layer.visible ? '◉' : '○';
+            option.textContent = `${visIcon} ${layer.name}`;
+            if (layer.name === currentLayer) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        }
+
+        // Update count
+        if (countSpan) {
+            countSpan.textContent = `${layers.length} layer${layers.length !== 1 ? 's' : ''}`;
+        }
+
+        // Update button states and properties based on current layer
+        const currentLayerData = layers.find(l => l.name === currentLayer);
+        const onBtn = document.getElementById('layer-toolbar-on');
+        const freezeBtn = document.getElementById('layer-toolbar-freeze');
+
+        if (currentLayerData) {
+            onBtn?.classList.toggle('active', !currentLayerData.visible);
+            freezeBtn?.classList.toggle('active', !currentLayerData.visible);
+
+            // Update color display
+            if (colorBox) {
+                const rawColor = currentLayerData.color;
+                let displayColor = '#ffffff';
+                // Handle color - can be string hex or number (ACI code)
+                if (typeof rawColor === 'number') {
+                    // ACI color code - convert to hex (simplified)
+                    const aciColors: { [key: number]: string } = {
+                        1: '#ff0000', 2: '#ffff00', 3: '#00ff00', 4: '#00ffff',
+                        5: '#0000ff', 6: '#ff00ff', 7: '#ffffff', 8: '#808080', 9: '#c0c0c0'
+                    };
+                    displayColor = aciColors[rawColor] || '#ffffff';
+                } else if (typeof rawColor === 'string') {
+                    displayColor = rawColor;
+                }
+                colorBox.style.backgroundColor = displayColor;
+            }
+
+            // Update lineweight display
+            if (lineweightSpan) {
+                const lw = currentLayerData.lineWeight ?? 0.25;
+                lineweightSpan.textContent = lw.toFixed(2);
+            }
+        }
+    }
+
+    private refreshLayerToolbarIfVisible(): void {
+        const toolbar = document.getElementById('layer-toolbar');
+        if (toolbar?.classList.contains('visible')) {
+            this.updateLayerToolbar();
         }
     }
 

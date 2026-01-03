@@ -427,6 +427,35 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
     <title>DXF Viewer</title>
 </head>
 <body>
+    <div id="layer-toolbar">
+        <span id="layer-toolbar-label">Layer:</span>
+        <select id="layer-toolbar-select" title="Current Layer"></select>
+        <div class="layer-toolbar-separator"></div>
+        <div class="layer-toolbar-props">
+            <span class="layer-toolbar-prop-label">Color:</span>
+            <div id="layer-toolbar-color" class="layer-toolbar-color-box" title="Layer Color"></div>
+            <span class="layer-toolbar-prop-label">LW:</span>
+            <span id="layer-toolbar-lineweight" class="layer-toolbar-lineweight" title="Line Weight">0.25</span>
+        </div>
+        <div class="layer-toolbar-separator"></div>
+        <button class="layer-toolbar-btn" id="layer-toolbar-on" title="Layer On/Off">
+            <span>💡</span>
+        </button>
+        <button class="layer-toolbar-btn" id="layer-toolbar-freeze" title="Freeze/Thaw">
+            <span>❄</span>
+        </button>
+        <button class="layer-toolbar-btn" id="layer-toolbar-lock" title="Lock/Unlock">
+            <span>🔒</span>
+        </button>
+        <div class="layer-toolbar-separator"></div>
+        <button class="layer-toolbar-btn" id="layer-toolbar-manager" title="Layer Manager">
+            <span>⚙</span>
+        </button>
+        <div class="layer-toolbar-info">
+            <span id="layer-toolbar-count">0 layers</span>
+        </div>
+        <button class="layer-toolbar-close" id="layer-toolbar-close" title="Close">&times;</button>
+    </div>
     <div id="viewer-container"></div>
     <div id="drawing-mode-indicator" class="drawing-mode-indicator"></div>
     <div id="layer-panel">
