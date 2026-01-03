@@ -26,11 +26,22 @@ export class AcPeditCmd extends AcEdCommand {
         const editor = context.editor;
         context.commandLine.print('PEDIT', 'command');
 
-        // Select polyline
+        // First prompt: Select polyline or Multiple
+        const keywords: AcEdKeyword[] = [
+            { displayName: 'Multiple', globalName: 'MULTIPLE', localName: 'M' }
+        ];
+
         const selectResult = await editor.getEntity({
-            message: 'Select polyline',
+            message: 'Select polyline or [Multiple]',
+            keywords,
             allowNone: true
         });
+
+        // Check if Multiple option was selected
+        if (selectResult.status === PromptStatus.Keyword && selectResult.keyword === 'MULTIPLE') {
+            await this.executeMultiple(context);
+            return;
+        }
 
         if (selectResult.status === PromptStatus.Cancel || selectResult.status === PromptStatus.None) {
             return;
@@ -133,17 +144,41 @@ export class AcPeditCmd extends AcEdCommand {
 
             if (optionResult.status === PromptStatus.Keyword) {
                 switch (optionResult.keyword) {
-                    case 'CLOSE':
+                    case 'CLOSE': {
+                        // Save state for undo
+                        const oldVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+                        const oldClosed = polyline.closed ?? false;
+
                         polyline.closed = true;
-                        currentThreeObject = this.updatePolylineDisplay(polyline, currentThreeObject, context);
+                        const newObj = this.updatePolylineDisplay(polyline, context);
+                        if (newObj) currentThreeObject = newObj;
+
+                        // Record undo
+                        context.renderer.recordPolylineModifyAction(
+                            polyline, oldVertices, oldClosed,
+                            polyline.vertices.map(v => ({ x: v.x, y: v.y })), true
+                        );
                         context.commandLine.print('Polyline closed', 'success');
                         break;
+                    }
 
-                    case 'OPEN':
+                    case 'OPEN': {
+                        // Save state for undo
+                        const oldVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+                        const oldClosed = polyline.closed ?? false;
+
                         polyline.closed = false;
-                        currentThreeObject = this.updatePolylineDisplay(polyline, currentThreeObject, context);
+                        const newObj = this.updatePolylineDisplay(polyline, context);
+                        if (newObj) currentThreeObject = newObj;
+
+                        // Record undo
+                        context.renderer.recordPolylineModifyAction(
+                            polyline, oldVertices, oldClosed,
+                            polyline.vertices.map(v => ({ x: v.x, y: v.y })), false
+                        );
                         context.commandLine.print('Polyline opened', 'success');
                         break;
+                    }
 
                     case 'JOIN':
                         currentThreeObject = await this.joinPolylines(polyline, currentThreeObject, context);
@@ -153,11 +188,23 @@ export class AcPeditCmd extends AcEdCommand {
                         currentThreeObject = await this.editVertices(polyline, currentThreeObject, context);
                         break;
 
-                    case 'REVERSE':
+                    case 'REVERSE': {
+                        // Save state for undo
+                        const oldVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+                        const oldClosed = polyline.closed ?? false;
+
                         this.reversePolyline(polyline);
-                        currentThreeObject = this.updatePolylineDisplay(polyline, currentThreeObject, context);
+                        const newObj = this.updatePolylineDisplay(polyline, context);
+                        if (newObj) currentThreeObject = newObj;
+
+                        // Record undo
+                        context.renderer.recordPolylineModifyAction(
+                            polyline, oldVertices, oldClosed,
+                            polyline.vertices.map(v => ({ x: v.x, y: v.y })), oldClosed
+                        );
                         context.commandLine.print('Polyline reversed', 'success');
                         break;
+                    }
                 }
 
                 // Re-highlight after any changes
@@ -197,11 +244,17 @@ export class AcPeditCmd extends AcEdCommand {
             closed: false
         };
 
-        // Remove the original line
-        context.renderer.deleteEntity(threeObject);
+        // Get index for undo before deleting
+        const deletedIndex = context.renderer.getEntityIndex(line);
+
+        // Remove the original line (without recording undo)
+        context.renderer.deleteEntityWithoutUndo(threeObject);
 
         // Add the new polyline
         context.renderer.addEntity(polyline);
+
+        // Record undo action for the conversion
+        context.renderer.recordTrimAction(line, deletedIndex, [polyline]);
 
         // Find the newly created object
         const newObject = this.findThreeObjectForPolyline(polyline, context);
@@ -214,18 +267,13 @@ export class AcPeditCmd extends AcEdCommand {
 
     private updatePolylineDisplay(
         polyline: DxfPolyline,
-        threeObject: THREE.Object3D,
         context: EditorContext
-    ): THREE.Object3D {
-        // Remove the old display object
-        context.renderer.deleteEntity(threeObject);
-
-        // Create new display for the updated polyline
-        context.renderer.addEntity(polyline);
+    ): THREE.Object3D | null {
+        // Refresh the polyline display without creating undo record
+        context.renderer.refreshPolylineDisplay(polyline);
 
         // Find and return the new object
-        const newObject = this.findThreeObjectForPolyline(polyline, context);
-        return newObject || threeObject;
+        return this.findThreeObjectForPolyline(polyline, context);
     }
 
     private reversePolyline(polyline: DxfPolyline): void {
@@ -251,6 +299,13 @@ export class AcPeditCmd extends AcEdCommand {
         }
 
         const selectedObjects = context.renderer.getSelectedEntities();
+
+        // Save state for undo before any modifications
+        const oldVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+        const oldClosed = polyline.closed ?? false;
+        const deletedEntities: DxfEntity[] = [];
+        const deletedIndices: number[] = [];
+
         let joinCount = 0;
 
         for (const obj of selectedObjects) {
@@ -261,13 +316,19 @@ export class AcPeditCmd extends AcEdCommand {
             if (entity.type === 'LINE') {
                 const line = entity as DxfLine;
                 if (this.tryJoinLine(polyline, line)) {
-                    context.renderer.deleteEntity(obj);
+                    // Record for undo before deleting
+                    deletedEntities.push(entity);
+                    deletedIndices.push(context.renderer.getEntityIndex(entity));
+                    context.renderer.deleteEntityWithoutUndo(obj);
                     joinCount++;
                 }
             } else if (entity.type === 'POLYLINE' || entity.type === 'LWPOLYLINE') {
                 const otherPolyline = entity as DxfPolyline;
                 if (this.tryJoinPolyline(polyline, otherPolyline)) {
-                    context.renderer.deleteEntity(obj);
+                    // Record for undo before deleting
+                    deletedEntities.push(entity);
+                    deletedIndices.push(context.renderer.getEntityIndex(entity));
+                    context.renderer.deleteEntityWithoutUndo(obj);
                     joinCount++;
                 }
             }
@@ -277,7 +338,36 @@ export class AcPeditCmd extends AcEdCommand {
 
         let currentThreeObject = threeObject;
         if (joinCount > 0) {
-            currentThreeObject = this.updatePolylineDisplay(polyline, threeObject, context);
+            const newObj = this.updatePolylineDisplay(polyline, context);
+            if (newObj) currentThreeObject = newObj;
+
+            // Record undo for the entire join operation
+            // This combines: polyline modification + deleted entities
+            const newVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+            const newClosed = polyline.closed ?? false;
+
+            context.renderer.recordAction({
+                label: 'PEDIT Join',
+                undo: () => {
+                    // Restore polyline to old state
+                    polyline.vertices = oldVertices.map(v => ({ x: v.x, y: v.y }));
+                    polyline.closed = oldClosed;
+                    context.renderer.refreshPolylineDisplay(polyline);
+                    // Restore deleted entities
+                    context.renderer.insertEntitiesAtIndices(deletedEntities, deletedIndices);
+                },
+                redo: () => {
+                    // Delete the joined entities again
+                    for (const entity of deletedEntities) {
+                        context.renderer.removeEntityByReference(entity);
+                    }
+                    // Apply new polyline state
+                    polyline.vertices = newVertices.map(v => ({ x: v.x, y: v.y }));
+                    polyline.closed = newClosed;
+                    context.renderer.refreshPolylineDisplay(polyline);
+                }
+            });
+
             context.commandLine.print(`${joinCount} object(s) joined`, 'success');
         } else {
             context.commandLine.print('No objects could be joined', 'response');
@@ -422,53 +512,92 @@ export class AcPeditCmd extends AcEdCommand {
                         this.showVertexMarker(polyline, currentVertexIndex, context);
                         break;
 
-                    case 'INSERT':
+                    case 'INSERT': {
                         const insertResult = await editor.getPoint({
                             message: 'Specify location for new vertex'
                         });
 
                         if (insertResult.status === PromptStatus.OK && insertResult.value) {
+                            // Save state for undo
+                            const oldVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+                            const oldClosed = polyline.closed ?? false;
+
                             polyline.vertices.splice(currentVertexIndex + 1, 0, {
                                 x: insertResult.value.x,
                                 y: insertResult.value.y
                             });
                             currentVertexIndex++;
-                            currentThreeObject = this.updatePolylineDisplay(polyline, currentThreeObject, context);
+                            const newObj = this.updatePolylineDisplay(polyline, context);
+                            if (newObj) currentThreeObject = newObj;
+
+                            // Record undo
+                            context.renderer.recordPolylineModifyAction(
+                                polyline, oldVertices, oldClosed,
+                                polyline.vertices.map(v => ({ x: v.x, y: v.y })), oldClosed
+                            );
+
                             this.showVertexMarker(polyline, currentVertexIndex, context);
                             context.commandLine.print('Vertex inserted', 'success');
                         }
                         break;
+                    }
 
-                    case 'MOVE':
+                    case 'MOVE': {
                         const moveResult = await editor.getPoint({
                             message: 'Specify new location for vertex',
                             basePoint: polyline.vertices[currentVertexIndex]
                         });
 
                         if (moveResult.status === PromptStatus.OK && moveResult.value) {
+                            // Save state for undo
+                            const oldVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+                            const oldClosed = polyline.closed ?? false;
+
                             polyline.vertices[currentVertexIndex] = {
                                 x: moveResult.value.x,
                                 y: moveResult.value.y
                             };
-                            currentThreeObject = this.updatePolylineDisplay(polyline, currentThreeObject, context);
+                            const newObj = this.updatePolylineDisplay(polyline, context);
+                            if (newObj) currentThreeObject = newObj;
+
+                            // Record undo
+                            context.renderer.recordPolylineModifyAction(
+                                polyline, oldVertices, oldClosed,
+                                polyline.vertices.map(v => ({ x: v.x, y: v.y })), oldClosed
+                            );
+
                             this.showVertexMarker(polyline, currentVertexIndex, context);
                             context.commandLine.print('Vertex moved', 'success');
                         }
                         break;
+                    }
 
-                    case 'BREAK':
+                    case 'BREAK': {
                         if (polyline.vertices.length > 2) {
+                            // Save state for undo
+                            const oldVertices = polyline.vertices.map(v => ({ x: v.x, y: v.y }));
+                            const oldClosed = polyline.closed ?? false;
+
                             polyline.vertices.splice(currentVertexIndex, 1);
                             if (currentVertexIndex >= polyline.vertices.length) {
                                 currentVertexIndex = polyline.vertices.length - 1;
                             }
-                            currentThreeObject = this.updatePolylineDisplay(polyline, currentThreeObject, context);
+                            const newObj = this.updatePolylineDisplay(polyline, context);
+                            if (newObj) currentThreeObject = newObj;
+
+                            // Record undo
+                            context.renderer.recordPolylineModifyAction(
+                                polyline, oldVertices, oldClosed,
+                                polyline.vertices.map(v => ({ x: v.x, y: v.y })), oldClosed
+                            );
+
                             this.showVertexMarker(polyline, currentVertexIndex, context);
                             context.commandLine.print('Vertex deleted', 'success');
                         } else {
                             context.commandLine.print('Cannot delete - polyline needs at least 2 vertices', 'error');
                         }
                         break;
+                    }
 
                     case 'EXIT':
                         continueEditing = false;
@@ -488,5 +617,257 @@ export class AcPeditCmd extends AcEdCommand {
         context.renderer.cancelDrawing();
         context.renderer.addDrawingPoint(vertex.x, vertex.y);
         context.commandLine.print(`Vertex ${index + 1} of ${polyline.vertices.length}: (${vertex.x.toFixed(4)}, ${vertex.y.toFixed(4)})`, 'response');
+    }
+
+    /**
+     * Multiple mode - select multiple lines and convert them to polylines or join them
+     */
+    private async executeMultiple(context: EditorContext): Promise<void> {
+        const editor = context.editor;
+
+        context.commandLine.print('Select objects:', 'response');
+
+        // Get selection of objects
+        const selectResult = await editor.getSelection({
+            message: 'Select lines to convert to polyline'
+        });
+
+        if (selectResult.status !== PromptStatus.OK) {
+            return;
+        }
+
+        const selectedObjects = context.renderer.getSelectedEntities();
+        if (selectedObjects.length === 0) {
+            context.commandLine.print('No objects selected', 'response');
+            return;
+        }
+
+        // Filter for LINE entities only
+        const lines: { entity: DxfLine; object: THREE.Object3D }[] = [];
+        for (const obj of selectedObjects) {
+            const entity = obj.userData.entity as DxfEntity;
+            if (entity && entity.type === 'LINE') {
+                // Check if on locked layer
+                const layerName = obj.userData.layer || '0';
+                if (!context.renderer.isLayerLocked(layerName)) {
+                    lines.push({ entity: entity as DxfLine, object: obj });
+                }
+            }
+        }
+
+        context.renderer.clearSelection();
+
+        if (lines.length === 0) {
+            context.commandLine.print('No valid lines selected', 'response');
+            return;
+        }
+
+        context.commandLine.print(`${lines.length} lines selected.`, 'response');
+
+        // Ask for conversion option
+        const keywords: AcEdKeyword[] = [
+            { displayName: 'Yes', globalName: 'YES', localName: 'Y' },
+            { displayName: 'No', globalName: 'NO', localName: 'N' }
+        ];
+
+        const convertResult = await editor.getPoint({
+            message: 'Convert lines to polylines? [Yes/No]',
+            keywords,
+            allowNone: true
+        });
+
+        if (convertResult.status === PromptStatus.Keyword && convertResult.keyword === 'YES') {
+            // Convert all lines to polylines and try to join them
+            const polylines = this.convertLinesToPolylines(lines, context);
+
+            if (polylines.length > 0) {
+                // Ask if user wants to join them
+                const joinKeywords: AcEdKeyword[] = [
+                    { displayName: 'Yes', globalName: 'YES', localName: 'Y' },
+                    { displayName: 'No', globalName: 'NO', localName: 'N' }
+                ];
+
+                const joinResult = await editor.getPoint({
+                    message: `${polylines.length} polylines created. Join connected segments? [Yes/No]`,
+                    keywords: joinKeywords,
+                    allowNone: true
+                });
+
+                if (joinResult.status === PromptStatus.Keyword && joinResult.keyword === 'YES') {
+                    const joinedCount = this.joinAllPolylines(polylines, context);
+                    context.commandLine.print(`Joined into ${joinedCount} polyline(s)`, 'success');
+                } else {
+                    context.commandLine.print(`${polylines.length} polylines created`, 'success');
+                }
+            }
+        }
+    }
+
+    /**
+     * Convert multiple lines to polylines (without recording undo - caller handles it)
+     */
+    private convertLinesToPolylinesWithoutUndo(
+        lines: { entity: DxfLine; object: THREE.Object3D }[],
+        context: EditorContext,
+        deletedEntities: DxfEntity[],
+        deletedIndices: number[]
+    ): DxfPolyline[] {
+        const polylines: DxfPolyline[] = [];
+
+        for (const { entity: line, object } of lines) {
+            const polyline: DxfPolyline = {
+                type: 'LWPOLYLINE',
+                handle: context.renderer.generateHandle(),
+                layer: line.layer || '0',
+                vertices: [
+                    { x: line.start.x, y: line.start.y },
+                    { x: line.end.x, y: line.end.y }
+                ],
+                closed: false
+            };
+
+            // Record for undo before deleting
+            deletedEntities.push(line);
+            deletedIndices.push(context.renderer.getEntityIndex(line));
+
+            // Remove the original line (without recording undo)
+            context.renderer.deleteEntityWithoutUndo(object);
+
+            // Add the new polyline
+            context.renderer.addEntity(polyline);
+            polylines.push(polyline);
+        }
+
+        return polylines;
+    }
+
+    /**
+     * Join all connected polylines into as few polylines as possible (without recording undo)
+     */
+    private joinAllPolylinesWithoutUndo(
+        polylines: DxfPolyline[],
+        context: EditorContext,
+        deletedPolylines: DxfPolyline[],
+        deletedPolylineIndices: number[]
+    ): DxfPolyline[] {
+        const remaining = [...polylines];
+        const result: DxfPolyline[] = [];
+
+        while (remaining.length > 0) {
+            // Start with the first remaining polyline
+            const current = remaining.shift()!;
+            let joined = true;
+
+            // Keep trying to join until no more joins are possible
+            while (joined) {
+                joined = false;
+
+                for (let i = remaining.length - 1; i >= 0; i--) {
+                    const other = remaining[i];
+
+                    if (this.tryJoinPolyline(current, other)) {
+                        // Remove the joined polyline from remaining
+                        remaining.splice(i, 1);
+
+                        // Record for undo before deleting
+                        deletedPolylines.push(other);
+                        deletedPolylineIndices.push(context.renderer.getEntityIndex(other));
+
+                        // Delete the other polyline's display (without recording undo)
+                        const otherObj = this.findThreeObjectForPolyline(other, context);
+                        if (otherObj) {
+                            context.renderer.deleteEntityWithoutUndo(otherObj);
+                        }
+
+                        joined = true;
+                    }
+                }
+            }
+
+            result.push(current);
+
+            // Update the display of the current polyline
+            context.renderer.refreshPolylineDisplay(current);
+        }
+
+        return result;
+    }
+
+    /**
+     * Convert multiple lines to polylines (with undo support)
+     */
+    private convertLinesToPolylines(
+        lines: { entity: DxfLine; object: THREE.Object3D }[],
+        context: EditorContext
+    ): DxfPolyline[] {
+        const deletedEntities: DxfEntity[] = [];
+        const deletedIndices: number[] = [];
+
+        const polylines = this.convertLinesToPolylinesWithoutUndo(
+            lines, context, deletedEntities, deletedIndices
+        );
+
+        // Record undo for the conversion
+        context.renderer.recordPeditAction(
+            deletedEntities, deletedIndices, polylines, 'PEDIT Convert'
+        );
+
+        return polylines;
+    }
+
+    /**
+     * Join all connected polylines into as few polylines as possible (with undo support)
+     */
+    private joinAllPolylines(polylines: DxfPolyline[], context: EditorContext): number {
+        // Save original state of polylines for undo
+        const originalPolylineStates = polylines.map(p => ({
+            polyline: p,
+            vertices: p.vertices.map(v => ({ x: v.x, y: v.y })),
+            closed: p.closed ?? false
+        }));
+
+        const deletedPolylines: DxfPolyline[] = [];
+        const deletedPolylineIndices: number[] = [];
+
+        const result = this.joinAllPolylinesWithoutUndo(
+            polylines, context, deletedPolylines, deletedPolylineIndices
+        );
+
+        // Record undo for the join operation
+        const finalPolylineStates = result.map(p => ({
+            polyline: p,
+            vertices: p.vertices.map(v => ({ x: v.x, y: v.y })),
+            closed: p.closed ?? false
+        }));
+
+        context.renderer.recordAction({
+            label: 'PEDIT Join All',
+            undo: () => {
+                // Restore deleted polylines
+                context.renderer.insertEntitiesAtIndices(deletedPolylines, deletedPolylineIndices);
+
+                // Restore original polyline states
+                for (const state of originalPolylineStates) {
+                    state.polyline.vertices = state.vertices.map(v => ({ x: v.x, y: v.y }));
+                    state.polyline.closed = state.closed;
+                    context.renderer.refreshPolylineDisplay(state.polyline);
+                }
+            },
+            redo: () => {
+                // Delete the polylines that were joined
+                for (const p of deletedPolylines) {
+                    context.renderer.removeEntityByReference(p);
+                }
+
+                // Apply final polyline states
+                for (const state of finalPolylineStates) {
+                    state.polyline.vertices = state.vertices.map(v => ({ x: v.x, y: v.y }));
+                    state.polyline.closed = state.closed;
+                    context.renderer.refreshPolylineDisplay(state.polyline);
+                }
+            }
+        });
+
+        return result.length;
     }
 }

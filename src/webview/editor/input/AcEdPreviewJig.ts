@@ -226,3 +226,29 @@ export class DimensionJig extends AcEdPreviewJig {
         this.renderer.clearRubberBand();
     }
 }
+
+/**
+ * Polyline preview jig - shows all segments plus rubber band to current point
+ */
+export class PolylineJig extends AcEdPreviewJig {
+    private points: { x: number; y: number }[];
+
+    constructor(renderer: DxfRenderer, points: { x: number; y: number }[]) {
+        super(renderer);
+        this.points = [...points];
+    }
+
+    setPoints(points: { x: number; y: number }[]): void {
+        this.points = [...points];
+    }
+
+    update(point: { x: number; y: number }): void {
+        // Show all existing segments plus rubber band to current point
+        const allPoints = [...this.points, point];
+        this.renderer.updatePolylineRubberBand(allPoints);
+    }
+
+    clear(): void {
+        this.renderer.clearRubberBand();
+    }
+}

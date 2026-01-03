@@ -324,8 +324,13 @@ export class AcTrimCmd extends AcEdCommand {
         const dx = line.end.x - line.start.x;
         const dy = line.end.y - line.start.y;
 
-        // Remove the original line
-        context.renderer.deleteEntity(threeObject);
+        // Track entities for undo
+        const deletedEntity = line;
+        const deletedIndex = context.renderer.getEntityIndex(deletedEntity);
+        const createdEntities: DxfEntity[] = [];
+
+        // Remove the original line (without recording undo)
+        context.renderer.deleteEntityWithoutUndo(threeObject);
 
         // Create trimmed segments (keeping the parts outside the picked segment)
         if (segmentStart > 0.0001) {
@@ -333,7 +338,8 @@ export class AcTrimCmd extends AcEdCommand {
                 x: line.start.x + segmentStart * dx,
                 y: line.start.y + segmentStart * dy
             };
-            context.renderer.createLineFromPoints(line.start, newEnd);
+            const newLine = context.renderer.createLineFromPoints(line.start, newEnd);
+            if (newLine) createdEntities.push(newLine);
         }
 
         if (segmentEnd < 0.9999) {
@@ -341,8 +347,12 @@ export class AcTrimCmd extends AcEdCommand {
                 x: line.start.x + segmentEnd * dx,
                 y: line.start.y + segmentEnd * dy
             };
-            context.renderer.createLineFromPoints(newStart, line.end);
+            const newLine = context.renderer.createLineFromPoints(newStart, line.end);
+            if (newLine) createdEntities.push(newLine);
         }
+
+        // Record undo action for the entire trim operation
+        context.renderer.recordTrimAction(deletedEntity, deletedIndex, createdEntities);
 
         return true;
     }
@@ -372,21 +382,31 @@ export class AcTrimCmd extends AcEdCommand {
         const newStartAngle2 = arc.startAngle + segmentEnd * totalAngle;
         const newEndAngle2 = arc.endAngle;
 
-        // Remove the original arc
-        context.renderer.deleteEntity(threeObject);
+        // Track entities for undo
+        const deletedEntity = arc;
+        const deletedIndex = context.renderer.getEntityIndex(deletedEntity);
+        const createdEntities: DxfEntity[] = [];
+
+        // Remove the original arc (without recording undo)
+        context.renderer.deleteEntityWithoutUndo(threeObject);
 
         // Create trimmed arc segments
         if (segmentStart > 0.0001) {
-            context.renderer.createArcFromCenterRadiusAngles(
+            const newArc = context.renderer.createArcFromCenterRadiusAngles(
                 arc.center, arc.radius, newStartAngle1, newEndAngle1
             );
+            if (newArc) createdEntities.push(newArc);
         }
 
         if (segmentEnd < 0.9999) {
-            context.renderer.createArcFromCenterRadiusAngles(
+            const newArc = context.renderer.createArcFromCenterRadiusAngles(
                 arc.center, arc.radius, newStartAngle2, newEndAngle2
             );
+            if (newArc) createdEntities.push(newArc);
         }
+
+        // Record undo action for the entire trim operation
+        context.renderer.recordTrimAction(deletedEntity, deletedIndex, createdEntities);
 
         return true;
     }

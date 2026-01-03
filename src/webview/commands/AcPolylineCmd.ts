@@ -1,5 +1,5 @@
 /**
- * POLYLINE Command - Draws continuous polyline segments
+ * POLYLINE Command - Draws continuous polyline as a single LWPOLYLINE entity
  *
  * Usage:
  *   POLYLINE (or PLINE)
@@ -9,17 +9,15 @@
  *   Press Enter to finish
  */
 
-import { AcEdCommand, EditorContext, AcEditorInterface } from '../editor/command/AcEdCommand';
+import { AcEdCommand, EditorContext } from '../editor/command/AcEdCommand';
 import { AcEdKeyword } from '../editor/input/prompt/AcEdPromptOptions';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
-import { LineJig } from '../editor/input/AcEdPreviewJig';
+import { PolylineJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D } from '../editor/input/handler/AcEdPointHandler';
-import { DxfEntity } from '../dxfParser';
-import * as THREE from 'three';
+import { DxfPolyline } from '../dxfParser';
 
 export class AcPolylineCmd extends AcEdCommand {
     private points: Point2D[] = [];
-    private createdEntities: THREE.Object3D[] = [];  // Track created entities for undo
 
     constructor() {
         super();
@@ -31,7 +29,6 @@ export class AcPolylineCmd extends AcEdCommand {
     async execute(context: EditorContext): Promise<void> {
         const editor = context.editor;
         this.points = [];
-        this.createdEntities = [];  // Reset tracking for new command execution
 
         context.commandLine.print('PLINE', 'command');
 
@@ -52,6 +49,9 @@ export class AcPolylineCmd extends AcEdCommand {
         this.points.push(firstPointResult.value);
         context.renderer.addDrawingPoint(firstPointResult.value.x, firstPointResult.value.y);
 
+        // Track if polyline should be closed
+        let isClosed = false;
+
         // Continuous polyline drawing loop
         let continueDrawing = true;
         while (continueDrawing) {
@@ -67,7 +67,7 @@ export class AcPolylineCmd extends AcEdCommand {
                 ];
 
             const lastPoint = this.points[this.points.length - 1];
-            const jig = new LineJig(context.renderer, lastPoint);
+            const jig = new PolylineJig(context.renderer, this.points);
 
             const nextPointResult = await editor.getPoint({
                 message: 'Specify next point',
@@ -82,12 +82,8 @@ export class AcPolylineCmd extends AcEdCommand {
             switch (nextPointResult.status) {
                 case PromptStatus.OK:
                     if (nextPointResult.value) {
-                        // Create line segment and track the Three.js object for undo
-                        const result = context.renderer.createLineFromPointsWithObject(lastPoint, nextPointResult.value);
-                        if (result) {
-                            this.createdEntities.push(result.object);
-                        }
                         this.points.push(nextPointResult.value);
+                        context.renderer.addDrawingPoint(nextPointResult.value.x, nextPointResult.value.y);
                         context.commandLine.print(
                             `To point: ${nextPointResult.value.x.toFixed(4)}, ${nextPointResult.value.y.toFixed(4)}`,
                             'response'
@@ -99,11 +95,7 @@ export class AcPolylineCmd extends AcEdCommand {
                     switch (nextPointResult.keyword) {
                         case 'CLOSE':
                             if (this.points.length >= 2) {
-                                const firstPoint = this.points[0];
-                                const result = context.renderer.createLineFromPointsWithObject(lastPoint, firstPoint);
-                                if (result) {
-                                    this.createdEntities.push(result.object);
-                                }
+                                isClosed = true;
                                 context.commandLine.print('Close', 'response');
                                 continueDrawing = false;
                             }
@@ -112,10 +104,10 @@ export class AcPolylineCmd extends AcEdCommand {
                         case 'UNDO':
                             if (this.points.length > 1) {
                                 this.points.pop();
-                                // Remove the specific line created by this command
-                                const lastCreated = this.createdEntities.pop();
-                                if (lastCreated) {
-                                    context.renderer.deleteEntity(lastCreated);
+                                context.renderer.cancelDrawing();
+                                // Re-draw remaining points
+                                for (const pt of this.points) {
+                                    context.renderer.addDrawingPoint(pt.x, pt.y);
                                 }
                                 context.commandLine.print('Undo', 'response');
                             } else if (this.points.length === 1) {
@@ -138,18 +130,24 @@ export class AcPolylineCmd extends AcEdCommand {
             }
         }
 
-        // Cleanup
+        // Cleanup preview
         context.renderer.cancelDrawing();
 
-        const created = this.createdEntities
-            .map(object => object.userData.entity as DxfEntity | undefined)
-            .filter((entity): entity is DxfEntity => !!entity);
-
-        if (created.length > 0) {
-            context.renderer.recordAddAction(created);
-        }
-
+        // Create single LWPOLYLINE entity if we have at least 2 points
         if (this.points.length >= 2) {
+            const polyline: DxfPolyline = {
+                type: 'LWPOLYLINE',
+                handle: context.renderer.generateHandle(),
+                layer: context.renderer.getCurrentDrawingLayer(),
+                vertices: this.points.map(p => ({ x: p.x, y: p.y })),
+                closed: isClosed
+            };
+
+            const object = context.renderer.addEntity(polyline);
+            if (object) {
+                context.renderer.recordAddAction([polyline]);
+            }
+
             context.commandLine.print(`Polyline created with ${this.points.length} vertices`, 'success');
         }
     }

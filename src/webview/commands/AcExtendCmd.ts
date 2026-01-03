@@ -389,14 +389,25 @@ export class AcExtendCmd extends AcEdCommand {
 
         if (!bestIntersection) return false;
 
-        // Delete original and create extended line
-        context.renderer.deleteEntity(threeObject);
+        // Track entities for undo
+        const deletedEntity = line;
+        const deletedIndex = context.renderer.getEntityIndex(deletedEntity);
+        const createdEntities: DxfEntity[] = [];
 
+        // Delete original (without recording undo)
+        context.renderer.deleteEntityWithoutUndo(threeObject);
+
+        // Create extended line
+        let newLine: DxfLine | null = null;
         if (extendFromStart) {
-            context.renderer.createLineFromPoints(bestIntersection.point, line.end);
+            newLine = context.renderer.createLineFromPoints(bestIntersection.point, line.end);
         } else {
-            context.renderer.createLineFromPoints(line.start, bestIntersection.point);
+            newLine = context.renderer.createLineFromPoints(line.start, bestIntersection.point);
         }
+        if (newLine) createdEntities.push(newLine);
+
+        // Record undo action
+        context.renderer.recordTrimAction(deletedEntity, deletedIndex, createdEntities);
 
         return true;
     }
@@ -444,18 +455,29 @@ export class AcExtendCmd extends AcEdCommand {
             bestIntersection.point.x - arc.center.x
         ) * 180 / Math.PI;
 
-        // Delete original and create extended arc
-        context.renderer.deleteEntity(threeObject);
+        // Track entities for undo
+        const deletedEntity = arc;
+        const deletedIndex = context.renderer.getEntityIndex(deletedEntity);
+        const createdEntities: DxfEntity[] = [];
 
+        // Delete original (without recording undo)
+        context.renderer.deleteEntityWithoutUndo(threeObject);
+
+        // Create extended arc
+        let newArc: DxfArc | null = null;
         if (extendFromStart) {
-            context.renderer.createArcFromCenterRadiusAngles(
+            newArc = context.renderer.createArcFromCenterRadiusAngles(
                 arc.center, arc.radius, newAngle, arc.endAngle
             );
         } else {
-            context.renderer.createArcFromCenterRadiusAngles(
+            newArc = context.renderer.createArcFromCenterRadiusAngles(
                 arc.center, arc.radius, arc.startAngle, newAngle
             );
         }
+        if (newArc) createdEntities.push(newArc);
+
+        // Record undo action
+        context.renderer.recordTrimAction(deletedEntity, deletedIndex, createdEntities);
 
         return true;
     }

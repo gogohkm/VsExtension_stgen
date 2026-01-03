@@ -16,6 +16,7 @@ import {
     DxfPolyline,
     DxfText,
     DxfPoint_,
+    DxfPoint,
     DxfInsert,
     DxfEllipse,
     DxfSpline,
@@ -399,21 +400,12 @@ export class DxfRenderer {
 
         canvas.addEventListener('mousedown', (e) => {
             if (e.button === 0) {
-                // Left button
-                if (e.shiftKey) {
-                    // Shift+drag = box zoom
-                    this.isBoxZooming = true;
-                    this.boxSelectStart = { x: e.clientX, y: e.clientY };
-                    this.boxSelectEnd = { x: e.clientX, y: e.clientY };
-                    this.container.classList.add('selecting');
-                    this.updateSelectionBox();
-                } else {
-                    // Normal drag = box selection (window/crossing)
-                    this.isBoxSelecting = true;
-                    this.boxSelectStart = { x: e.clientX, y: e.clientY };
-                    this.boxSelectEnd = { x: e.clientX, y: e.clientY };
-                    // Don't show box yet - wait for drag to avoid flicker on click
-                }
+                // Left button - always start box selection
+                // Shift/Ctrl will be checked on mouseup to determine add-to-selection behavior
+                this.isBoxSelecting = true;
+                this.boxSelectStart = { x: e.clientX, y: e.clientY };
+                this.boxSelectEnd = { x: e.clientX, y: e.clientY };
+                // Don't show box yet - wait for drag to avoid flicker on click
             } else if (e.button === 1) {
                 // Middle button (wheel) = pan
                 this.isDragging = true;
@@ -481,8 +473,9 @@ export class DxfRenderer {
                 const dy = Math.abs(this.boxSelectEnd.y - this.boxSelectStart.y);
                 if (dx > 5 || dy > 5) {
                     // Box selection - determine window or crossing based on direction
+                    // Shift or Ctrl: add to selection, otherwise replace selection
                     const isWindowSelection = this.boxSelectEnd.x > this.boxSelectStart.x;
-                    this.selectByBox(isWindowSelection, e.ctrlKey || e.metaKey);
+                    this.selectByBox(isWindowSelection, e.shiftKey || e.ctrlKey || e.metaKey);
                 } else {
                     // Click selection (not a drag)
                     this.handleClick(e);
@@ -571,9 +564,24 @@ export class DxfRenderer {
             if (object) {
                 object.userData.entity = entity;
                 object.userData.layer = entity.layer;
+
+                // Compute bounding sphere for all geometries (required for raycaster)
+                object.traverse((child) => {
+                    if (child instanceof THREE.Line || child instanceof THREE.LineSegments || child instanceof THREE.Points) {
+                        if (child.geometry) {
+                            child.geometry.computeBoundingSphere();
+                            child.geometry.computeBoundingBox();
+                        }
+                    }
+                });
+
                 this.entityGroup.add(object);
             }
         }
+
+        // Force update world matrices for all objects so raycaster can detect them correctly
+        // This is critical for INSERT (block reference) entities which have transformations
+        this.entityGroup.updateMatrixWorld(true);
 
         // Fit view to content
         this.fitView();
@@ -1001,6 +1009,21 @@ export class DxfRenderer {
         for (const entity of block.entities) {
             const object = this.renderEntity(entity, dxf);
             if (object) {
+                // Set userData for block entities so they can be selected
+                object.userData.entity = entity;
+                object.userData.layer = entity.layer;
+                object.userData.blockName = insert.blockName;
+
+                // Compute bounding sphere for raycaster detection
+                object.traverse((child) => {
+                    if (child instanceof THREE.Line || child instanceof THREE.LineSegments || child instanceof THREE.Points) {
+                        if (child.geometry) {
+                            child.geometry.computeBoundingSphere();
+                            child.geometry.computeBoundingBox();
+                        }
+                    }
+                });
+
                 group.add(object);
             }
         }
@@ -1013,6 +1036,9 @@ export class DxfRenderer {
         );
         group.scale.set(insert.scale.x, insert.scale.y, 1);
         group.rotation.z = insert.rotation * Math.PI / 180;
+
+        // Force update world matrix so raycaster can detect objects at correct positions
+        group.updateMatrixWorld(true);
 
         return group;
     }
@@ -1224,6 +1250,36 @@ export class DxfRenderer {
         } else if (!hatch.solid && hatch.patternName) {
             // Non-solid hatches: draw pattern lines
             this.renderHatchPattern(hatch, color, group);
+        }
+
+        // Add nearly invisible selection mesh for all hatches to make them selectable
+        // This ensures hatches can be clicked even when pattern lines are thin
+        // Note: opacity must be > 0 for raycaster to detect the mesh
+        for (const path of hatch.boundaryPaths) {
+            if (path.length >= 3) {
+                try {
+                    const shape = new THREE.Shape();
+                    shape.moveTo(path[0].x, path[0].y);
+                    for (let i = 1; i < path.length; i++) {
+                        shape.lineTo(path[i].x, path[i].y);
+                    }
+                    shape.closePath();
+
+                    const selectionGeometry = new THREE.ShapeGeometry(shape);
+                    const selectionMaterial = new THREE.MeshBasicMaterial({
+                        transparent: true,
+                        opacity: 0.001, // Nearly invisible but raycaster can detect it
+                        side: THREE.DoubleSide,
+                        depthWrite: false
+                    });
+                    const selectionMesh = new THREE.Mesh(selectionGeometry, selectionMaterial);
+                    selectionMesh.position.z = -0.005; // Between boundary lines and fill
+                    selectionMesh.userData.isSelectionHelper = true;
+                    group.add(selectionMesh);
+                } catch (e) {
+                    // Ignore errors for complex shapes
+                }
+            }
         }
 
         return group;
@@ -2210,7 +2266,15 @@ export class DxfRenderer {
             const entity = object.userData.entity as DxfEntity;
             if (!entity) continue;
 
-            const entityBounds = this.getEntityBounds(entity);
+            // Always try to get bounds from Three.js object first (most accurate)
+            // Falls back to entity-based bounds if object bounds fail
+            let entityBounds: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
+
+            entityBounds = this.getObjectBounds(object);
+            if (!entityBounds) {
+                entityBounds = this.getEntityBounds(entity);
+            }
+
             if (!entityBounds) continue;
 
             let shouldSelect = false;
@@ -2240,6 +2304,26 @@ export class DxfRenderer {
 
         this.updateSelectionStatus();
         this.render();
+    }
+
+    /**
+     * Get bounding box from Three.js object (for INSERT and groups)
+     * This computes the actual world-space bounds of transformed objects
+     */
+    private getObjectBounds(object: THREE.Object3D): { minX: number; maxX: number; minY: number; maxY: number } | null {
+        const box = new THREE.Box3();
+        box.setFromObject(object);
+
+        if (box.isEmpty()) {
+            return null;
+        }
+
+        return {
+            minX: box.min.x,
+            maxX: box.max.x,
+            minY: box.min.y,
+            maxY: box.max.y
+        };
     }
 
     /**
@@ -2367,6 +2451,11 @@ export class DxfRenderer {
         const ndc = this.screenToNDC(e);
         this.raycaster.setFromCamera(ndc, this.camera);
 
+        // Adjust raycaster threshold based on current view scale
+        const pickThreshold = this.viewWidth / this.container.clientWidth * 10;
+        this.raycaster.params.Line = { threshold: pickThreshold };
+        this.raycaster.params.Points = { threshold: pickThreshold };
+
         const intersects = this.raycaster.intersectObjects(this.entityGroup.children, true);
 
         if (intersects.length > 0) {
@@ -2378,7 +2467,7 @@ export class DxfRenderer {
 
                 // Set new hover
                 this.hoveredEntity = hitObject;
-                this.highlightEntity(hitObject, 0x00ffff); // Cyan for hover
+                this.highlightEntity(hitObject, 0x00ffff, false); // Cyan for hover (solid line)
                 this.container.classList.add('hovering');
                 this.showEntityInfo(hitObject, e);
                 this.render();
@@ -2410,26 +2499,40 @@ export class DxfRenderer {
         const ndc = this.screenToNDC(e);
         this.raycaster.setFromCamera(ndc, this.camera);
 
+        // Adjust raycaster threshold based on current view scale
+        const pickThreshold = this.viewWidth / this.container.clientWidth * 10;
+        this.raycaster.params.Line = { threshold: pickThreshold };
+        this.raycaster.params.Points = { threshold: pickThreshold };
+
         const intersects = this.raycaster.intersectObjects(this.entityGroup.children, true);
 
         if (intersects.length > 0) {
             const hitObject = this.findEntityRoot(intersects[0].object);
 
-            if (e.ctrlKey || e.metaKey || this.commandSelectionMode) {
-                // Toggle selection with Ctrl/Cmd or in command selection mode
+            // AutoCAD-style selection:
+            // - Shift: Add to selection (keep existing, add new)
+            // - Ctrl/Cmd: Toggle selection (remove if selected, add if not)
+            // - No modifier: Replace selection (clear existing, select new)
+            if (e.shiftKey || this.commandSelectionMode) {
+                // Shift: Add to selection (don't deselect if already selected)
+                if (!this.selectedEntities.has(hitObject)) {
+                    this.selectEntity(hitObject);
+                }
+            } else if (e.ctrlKey || e.metaKey) {
+                // Ctrl/Cmd: Toggle selection
                 if (this.selectedEntities.has(hitObject)) {
                     this.deselectEntity(hitObject);
                 } else {
                     this.selectEntity(hitObject);
                 }
             } else {
-                // Single selection
+                // No modifier: Replace selection
                 this.clearSelection();
                 this.selectEntity(hitObject);
             }
         } else {
-            // Click on empty space - clear selection (but not in command selection mode)
-            if (!e.ctrlKey && !e.metaKey && !this.commandSelectionMode) {
+            // Click on empty space - clear selection (but not with modifiers or in command mode)
+            if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !this.commandSelectionMode) {
                 this.clearSelection();
             }
         }
@@ -2449,7 +2552,7 @@ export class DxfRenderer {
 
     private selectEntity(object: THREE.Object3D): void {
         this.selectedEntities.add(object);
-        this.highlightEntity(object, 0xffff00); // Yellow for selection
+        this.highlightEntity(object, 0xffff00, true); // Yellow for selection (dashed line)
     }
 
     private deselectEntity(object: THREE.Object3D): void {
@@ -2466,7 +2569,11 @@ export class DxfRenderer {
         this.render();
     }
 
-    private highlightEntity(object: THREE.Object3D, color: number): void {
+    private highlightEntity(object: THREE.Object3D, color: number, useDashed: boolean = true): void {
+        // Calculate dash size based on current view scale
+        const dashSize = this.screenToWorldDistance(6);
+        const gapSize = this.screenToWorldDistance(4);
+
         object.traverse((child) => {
             if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
                 // Store original material if not already stored
@@ -2474,16 +2581,27 @@ export class DxfRenderer {
                     this.originalMaterials.set(child, child.material);
                 }
 
-                // Apply highlight color
-                if (child.material instanceof THREE.LineBasicMaterial) {
-                    child.material = new THREE.LineBasicMaterial({ color });
-                } else if (child.material instanceof THREE.PointsMaterial) {
+                // Apply highlight with dashed line for selection
+                if (child instanceof THREE.Line) {
+                    if (useDashed) {
+                        child.material = new THREE.LineDashedMaterial({
+                            color,
+                            dashSize,
+                            gapSize,
+                            scale: 1
+                        });
+                        // Compute line distances for dashed material
+                        child.computeLineDistances();
+                    } else {
+                        child.material = new THREE.LineBasicMaterial({ color });
+                    }
+                } else if (child instanceof THREE.Points) {
                     child.material = new THREE.PointsMaterial({
                         color,
                         size: (child.material as THREE.PointsMaterial).size,
                         sizeAttenuation: false
                     });
-                } else if (child.material instanceof THREE.MeshBasicMaterial) {
+                } else if (child instanceof THREE.Mesh) {
                     child.material = new THREE.MeshBasicMaterial({
                         color,
                         side: THREE.DoubleSide,
@@ -2638,11 +2756,15 @@ export class DxfRenderer {
     // ========== Highlight Mode (for cutting edges, boundaries, etc.) ==========
 
     /**
-     * Highlights entities with a glow effect (e.g., for cutting edges in TRIM/EXTEND)
+     * Highlights entities with dashed lines (e.g., for cutting edges in TRIM/EXTEND)
      */
     highlightEntities(entities: THREE.Object3D[]): void {
         // Clear any existing highlights first
         this.clearHighlight();
+
+        // Calculate dash size based on current view scale
+        const dashSize = this.screenToWorldDistance(6);
+        const gapSize = this.screenToWorldDistance(4);
 
         for (const object of entities) {
             if (object instanceof THREE.Line || object instanceof THREE.LineSegments) {
@@ -2650,14 +2772,15 @@ export class DxfRenderer {
                 this.highlightMaterials.set(object, object.material);
                 this.highlightedEntities.add(object);
 
-                // Create bright highlight material
-                const highlightMaterial = new THREE.LineBasicMaterial({
+                // Create dashed highlight material
+                const highlightMaterial = new THREE.LineDashedMaterial({
                     color: 0x00ffff, // Cyan color for highlight
-                    linewidth: 2,
-                    transparent: true,
-                    opacity: 1.0
+                    dashSize,
+                    gapSize,
+                    scale: 1
                 });
                 object.material = highlightMaterial;
+                object.computeLineDistances();
             } else if (object instanceof THREE.Mesh) {
                 // Store original material
                 this.highlightMaterials.set(object, object.material);
@@ -4465,6 +4588,29 @@ export class DxfRenderer {
     }
 
     /**
+     * Update rubber band for polyline preview (multiple connected segments)
+     */
+    updatePolylineRubberBand(vertices: { x: number; y: number }[]): void {
+        this.clearRubberBand();
+
+        if (vertices.length < 2) return;
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const points = vertices.map(v => new THREE.Vector3(v.x, v.y, 0.1));
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        this.rubberBandLine = new THREE.Line(geometry, material);
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
+    /**
      * Update rubber band for arc preview (center, radius, angles)
      */
     updateArcRubberBand(
@@ -4704,7 +4850,7 @@ export class DxfRenderer {
         return this.snapEnabled;
     }
 
-    private recordAction(action: UndoAction): void {
+    recordAction(action: UndoAction): void {
         if (this.applyingHistory) {
             return;
         }
@@ -4757,6 +4903,172 @@ export class DxfRenderer {
                 this.moveEntities(entities, dx, dy);
             }
         });
+    }
+
+    /**
+     * Record a trim action (delete original + create new segments)
+     */
+    recordTrimAction(deletedEntity: DxfEntity, deletedIndex: number, createdEntities: DxfEntity[]): void {
+        this.recordAction({
+            label: 'Trim',
+            undo: () => {
+                // Remove created entities
+                for (const entity of createdEntities) {
+                    this.removeEntityByReference(entity);
+                }
+                // Restore deleted entity
+                this.insertEntitiesAtIndices([deletedEntity], [deletedIndex]);
+            },
+            redo: () => {
+                // Delete the original entity
+                this.removeEntityByReference(deletedEntity);
+                // Re-create the trimmed segments
+                for (const entity of createdEntities) {
+                    this.addEntity(entity);
+                }
+            }
+        });
+    }
+
+    /**
+     * Record a PEDIT action (delete multiple entities + create multiple new entities)
+     */
+    recordPeditAction(
+        deletedEntities: DxfEntity[],
+        deletedIndices: number[],
+        createdEntities: DxfEntity[],
+        label: string = 'PEDIT'
+    ): void {
+        this.recordAction({
+            label,
+            undo: () => {
+                // Remove created entities
+                for (const entity of createdEntities) {
+                    this.removeEntityByReference(entity);
+                }
+                // Restore deleted entities at original indices
+                this.insertEntitiesAtIndices(deletedEntities, deletedIndices);
+            },
+            redo: () => {
+                // Delete the original entities
+                for (const entity of deletedEntities) {
+                    this.removeEntityByReference(entity);
+                }
+                // Re-create the new entities
+                for (const entity of createdEntities) {
+                    this.addEntity(entity);
+                }
+            }
+        });
+    }
+
+    /**
+     * Record a polyline modification action (vertices changed, closed state changed, etc.)
+     */
+    recordPolylineModifyAction(
+        polyline: DxfPolyline,
+        oldVertices: DxfPoint[],
+        oldClosed: boolean,
+        newVertices: DxfPoint[],
+        newClosed: boolean
+    ): void {
+        this.recordAction({
+            label: 'PEDIT Modify',
+            undo: () => {
+                // Restore old state
+                polyline.vertices = oldVertices.map(v => ({ x: v.x, y: v.y }));
+                polyline.closed = oldClosed;
+                this.refreshPolylineDisplay(polyline);
+            },
+            redo: () => {
+                // Apply new state
+                polyline.vertices = newVertices.map(v => ({ x: v.x, y: v.y }));
+                polyline.closed = newClosed;
+                this.refreshPolylineDisplay(polyline);
+            }
+        });
+    }
+
+    /**
+     * Refresh the display of a polyline without creating undo record
+     */
+    refreshPolylineDisplay(polyline: DxfPolyline): void {
+        // Find existing three object for this polyline
+        const existingObj = this.entityGroup.children.find(
+            obj => obj.userData.entity === polyline
+        );
+
+        if (existingObj) {
+            // Remove old display
+            this.entityGroup.remove(existingObj);
+            existingObj.traverse((child) => {
+                if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                    child.geometry.dispose();
+                }
+            });
+            this.originalMaterials.delete(existingObj);
+        }
+
+        // Get layer info for color and linetype
+        const layerName = polyline.layer || '0';
+        const layer = this.parsedDxf?.layers?.get(layerName);
+        const color = layer?.color ?? 7;
+        const lineTypeName = layer?.lineType || 'CONTINUOUS';
+        const lineType = this.parsedDxf?.lineTypes?.get(lineTypeName) || null;
+        const lineWidth = layer?.lineWeight ?? 1;
+
+        // Create new display using renderPolyline
+        const newObj = this.renderPolyline(polyline, color, lineType, lineWidth);
+        newObj.userData.entity = polyline;
+        newObj.userData.layer = layerName;
+        this.entityGroup.add(newObj);
+
+        this.render();
+    }
+
+    /**
+     * Get the index of an entity in parsedDxf.entities
+     */
+    getEntityIndex(entity: DxfEntity): number {
+        if (!this.parsedDxf) return -1;
+        return this.parsedDxf.entities.indexOf(entity);
+    }
+
+    /**
+     * Delete entity without recording undo (for use in compound operations)
+     */
+    deleteEntityWithoutUndo(object: THREE.Object3D): boolean {
+        if (!this.entityGroup.children.includes(object)) {
+            return false;
+        }
+
+        // Remove from selection if selected
+        if (this.selectedEntities.has(object)) {
+            this.selectedEntities.delete(object);
+        }
+
+        // Remove from scene
+        this.entityGroup.remove(object);
+
+        // Clean up
+        this.originalMaterials.delete(object);
+        object.traverse((child) => {
+            if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                child.geometry.dispose();
+            }
+        });
+
+        // Remove from parsed DXF
+        if (object.userData.entity && this.parsedDxf) {
+            const idx = this.parsedDxf.entities.indexOf(object.userData.entity);
+            if (idx !== -1) {
+                this.parsedDxf.entities.splice(idx, 1);
+            }
+        }
+
+        this.updateSelectionStatus();
+        this.render();
+        return true;
     }
 
     // Undo last action
@@ -4870,7 +5182,7 @@ export class DxfRenderer {
         return undefined;
     }
 
-    private removeEntityByReference(entity: DxfEntity): void {
+    removeEntityByReference(entity: DxfEntity): void {
         const object = this.findObjectByEntity(entity);
         if (object) {
             this.deleteEntity(object);
@@ -4885,7 +5197,7 @@ export class DxfRenderer {
         }
     }
 
-    private insertEntitiesAtIndices(entities: DxfEntity[], indices: number[]): void {
+    insertEntitiesAtIndices(entities: DxfEntity[], indices: number[]): void {
         if (!this.parsedDxf) return;
 
         const pairs = entities.map((entity, i) => ({

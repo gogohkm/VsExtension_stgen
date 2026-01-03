@@ -258,7 +258,10 @@ export class AcOffsetCmd extends AcEdCommand {
             y: line.end.y + side * distance * ny
         };
 
-        context.renderer.createLineFromPoints(newStart, newEnd);
+        const newLine = context.renderer.createLineFromPoints(newStart, newEnd);
+        if (newLine) {
+            context.renderer.recordAddAction([newLine]);
+        }
         return true;
     }
 
@@ -276,7 +279,10 @@ export class AcOffsetCmd extends AcEdCommand {
             return false; // Cannot create circle with zero or negative radius
         }
 
-        context.renderer.createCircleFromCenterRadius(circle.center, newRadius);
+        const newCircle = context.renderer.createCircleFromCenterRadius(circle.center, newRadius);
+        if (newCircle) {
+            context.renderer.recordAddAction([newCircle]);
+        }
         return true;
     }
 
@@ -294,9 +300,12 @@ export class AcOffsetCmd extends AcEdCommand {
             return false;
         }
 
-        context.renderer.createArcFromCenterRadiusAngles(
+        const newArc = context.renderer.createArcFromCenterRadiusAngles(
             arc.center, newRadius, arc.startAngle, arc.endAngle
         );
+        if (newArc) {
+            context.renderer.recordAddAction([newArc]);
+        }
         return true;
     }
 
@@ -385,16 +394,24 @@ export class AcOffsetCmd extends AcEdCommand {
             });
         }
 
-        // Create offset lines for each segment
+        // Create offset lines for each segment and track for undo
+        const createdEntities: DxfEntity[] = [];
+
         for (let i = 0; i < newVertices.length - 1; i++) {
-            context.renderer.createLineFromPoints(newVertices[i], newVertices[i + 1]);
+            const newLine = context.renderer.createLineFromPoints(newVertices[i], newVertices[i + 1]);
+            if (newLine) createdEntities.push(newLine);
         }
 
         if (polyline.closed && newVertices.length > 0) {
-            context.renderer.createLineFromPoints(
+            const closingLine = context.renderer.createLineFromPoints(
                 newVertices[newVertices.length - 1],
                 newVertices[0]
             );
+            if (closingLine) createdEntities.push(closingLine);
+        }
+
+        if (createdEntities.length > 0) {
+            context.renderer.recordAddAction(createdEntities);
         }
 
         return true;
