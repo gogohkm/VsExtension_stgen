@@ -158,7 +158,7 @@ html, body {
     position: absolute;
     top: 10px;
     right: 10px;
-    width: 220px;
+    width: 320px;
     max-height: calc(100% - 100px);
     background-color: var(--vscode-editor-background, #252526);
     border: 1px solid var(--vscode-panel-border, #3c3c3c);
@@ -256,10 +256,10 @@ html, body {
 .layer-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 4px 10px;
     font-size: 11px;
-    cursor: pointer;
+    cursor: default;
     transition: background-color 0.1s;
 }
 
@@ -270,8 +270,40 @@ html, body {
 .layer-item input[type="checkbox"] {
     margin: 0;
     cursor: pointer;
+    flex-shrink: 0;
 }
 
+/* Layer color picker - styled as small square */
+.layer-color-picker {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--vscode-panel-border, #3c3c3c);
+    border-radius: 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+    background: none;
+}
+
+.layer-color-picker::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.layer-color-picker::-webkit-color-swatch {
+    border: none;
+    border-radius: 1px;
+}
+
+.layer-color-picker::-moz-color-swatch {
+    border: none;
+    border-radius: 1px;
+}
+
+.layer-color-picker:hover {
+    border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+/* Old layer-color class - kept for backwards compatibility */
 .layer-color {
     width: 14px;
     height: 14px;
@@ -282,14 +314,46 @@ html, body {
 
 .layer-name {
     flex: 1;
+    min-width: 60px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    cursor: pointer;
+}
+
+.layer-name:hover {
+    color: var(--vscode-textLink-foreground, #3794ff);
+    text-decoration: underline;
+}
+
+/* Layer linetype dropdown */
+.layer-linetype-select {
+    width: 90px;
+    padding: 2px 4px;
+    font-size: 10px;
+    background-color: var(--vscode-dropdown-background, #3c3c3c);
+    color: var(--vscode-dropdown-foreground, #cccccc);
+    border: 1px solid var(--vscode-dropdown-border, #5a5a5a);
+    border-radius: 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.layer-linetype-select:hover {
+    border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.layer-linetype-select:focus {
+    outline: none;
+    border-color: var(--vscode-focusBorder, #007fd4);
 }
 
 .layer-count {
     color: var(--vscode-descriptionForeground, #888888);
     font-size: 10px;
+    flex-shrink: 0;
+    min-width: 30px;
+    text-align: right;
 }
 
 /* Snap settings panel */

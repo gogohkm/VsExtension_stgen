@@ -1685,7 +1685,7 @@ export class DxfRenderer {
         return new Map(this.layerVisibility);
     }
 
-    getLayers(): Array<{ name: string; color: number; visible: boolean; entityCount: number }> {
+    getLayers(): Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string }> {
         if (!this.parsedDxf) {
             return [];
         }
@@ -1697,15 +1697,17 @@ export class DxfRenderer {
             entityCounts.set(entity.layer, count + 1);
         }
 
-        const layers: Array<{ name: string; color: number; visible: boolean; entityCount: number }> = [];
+        const layers: Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string }> = [];
 
         // Add default layer if it has entities
         if (entityCounts.has('0') && !this.parsedDxf.layers.has('0')) {
             layers.push({
                 name: '0',
                 color: 0xffffff,
+                colorIndex: 7,
                 visible: this.layerVisibility.get('0') ?? true,
-                entityCount: entityCounts.get('0') || 0
+                entityCount: entityCounts.get('0') || 0,
+                lineType: 'CONTINUOUS'
             });
         }
 
@@ -1714,8 +1716,10 @@ export class DxfRenderer {
             layers.push({
                 name,
                 color: aciToColor(layer.color),
+                colorIndex: layer.color,
                 visible: this.layerVisibility.get(name) ?? true,
-                entityCount: entityCounts.get(name) || 0
+                entityCount: entityCounts.get(name) || 0,
+                lineType: layer.lineType || 'CONTINUOUS'
             });
         }
 
@@ -1725,8 +1729,10 @@ export class DxfRenderer {
                 layers.push({
                     name: layerName,
                     color: 0xffffff,
+                    colorIndex: 7,
                     visible: this.layerVisibility.get(layerName) ?? true,
-                    entityCount: count
+                    entityCount: count,
+                    lineType: 'CONTINUOUS'
                 });
             }
         }
@@ -3306,8 +3312,10 @@ export class DxfRenderer {
                 this.parsedDxf.entities.push(lineEntity);
             }
 
-            // Render the new line
-            const lineObject = this.renderLine(lineEntity, this.currentDrawingColor, null);
+            // Render the new line with layer color and linetype
+            const layerColor = this.getCurrentLayerColor();
+            const layerLineType = this.getCurrentLayerLineType();
+            const lineObject = this.renderLine(lineEntity, layerColor, layerLineType);
             lineObject.userData.entity = lineEntity;
             lineObject.userData.layer = lineEntity.layer;
             this.entityGroup.add(lineObject);
@@ -3361,8 +3369,10 @@ export class DxfRenderer {
                 this.parsedDxf.entities.push(circleEntity);
             }
 
-            // Render the new circle
-            const circleObject = this.renderCircle(circleEntity, this.currentDrawingColor, null);
+            // Render the new circle with layer color and linetype
+            const layerColor = this.getCurrentLayerColor();
+            const layerLineType = this.getCurrentLayerLineType();
+            const circleObject = this.renderCircle(circleEntity, layerColor, layerLineType);
             circleObject.userData.entity = circleEntity;
             circleObject.userData.layer = circleEntity.layer;
             this.entityGroup.add(circleObject);
@@ -3504,7 +3514,7 @@ export class DxfRenderer {
      * @param color ACI color index (default: 7 = white)
      * @returns true if layer was added, false if it already exists
      */
-    addLayer(name: string, color: number = 7): boolean {
+    addLayer(name: string, color: number = 7, lineType: string = 'CONTINUOUS'): boolean {
         if (!this.parsedDxf) return false;
 
         // Check if layer already exists
@@ -3517,7 +3527,8 @@ export class DxfRenderer {
             name,
             color,
             frozen: false,
-            off: false
+            off: false,
+            lineType: lineType
         });
 
         // Set layer visibility
@@ -3526,8 +3537,158 @@ export class DxfRenderer {
         return true;
     }
 
+    /**
+     * Sets the color for a layer (ACI color index)
+     * @param layerName Layer name
+     * @param color ACI color index (1-255)
+     */
+    setLayerColor(layerName: string, color: number): boolean {
+        if (!this.parsedDxf) return false;
+
+        const layer = this.parsedDxf.layers.get(layerName);
+        if (!layer) {
+            // Layer might exist only in entities, add it
+            this.parsedDxf.layers.set(layerName, {
+                name: layerName,
+                color: color,
+                frozen: false,
+                off: false,
+                lineType: 'CONTINUOUS'
+            });
+        } else {
+            layer.color = color;
+        }
+
+        // Re-render entities on this layer with new color
+        this.updateLayerAppearance(layerName);
+        return true;
+    }
+
+    /**
+     * Sets the linetype for a layer
+     * @param layerName Layer name
+     * @param lineTypeName Linetype name (CONTINUOUS, DASHED, HIDDEN, CENTER, etc.)
+     */
+    setLayerLineType(layerName: string, lineTypeName: string): boolean {
+        if (!this.parsedDxf) return false;
+
+        const layer = this.parsedDxf.layers.get(layerName);
+        if (!layer) {
+            // Layer might exist only in entities, add it
+            this.parsedDxf.layers.set(layerName, {
+                name: layerName,
+                color: 7,
+                frozen: false,
+                off: false,
+                lineType: lineTypeName.toUpperCase()
+            });
+        } else {
+            layer.lineType = lineTypeName.toUpperCase();
+        }
+
+        // Re-render entities on this layer with new linetype
+        this.updateLayerAppearance(layerName);
+        return true;
+    }
+
+    /**
+     * Gets available linetypes
+     */
+    getAvailableLineTypes(): Array<{ name: string; description: string }> {
+        if (!this.parsedDxf) {
+            return [
+                { name: 'CONTINUOUS', description: 'Solid line' },
+                { name: 'DASHED', description: 'Dashed line' },
+                { name: 'HIDDEN', description: 'Hidden line' },
+                { name: 'CENTER', description: 'Center line' },
+                { name: 'DASHDOT', description: 'Dash dot line' },
+                { name: 'PHANTOM', description: 'Phantom line' },
+                { name: 'DOT', description: 'Dotted line' }
+            ];
+        }
+
+        const lineTypes: Array<{ name: string; description: string }> = [];
+        for (const [, lt] of this.parsedDxf.lineTypes) {
+            lineTypes.push({ name: lt.name, description: lt.description });
+        }
+        return lineTypes.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Re-renders all entities on a layer with updated appearance
+     */
+    private updateLayerAppearance(layerName: string): void {
+        if (!this.parsedDxf) {
+            return;
+        }
+
+        // Find and update all entities on this layer
+        const entitiesToUpdate: THREE.Object3D[] = [];
+        this.entityGroup.traverse((object) => {
+            if (object.userData.layer === layerName) {
+                entitiesToUpdate.push(object);
+            }
+        });
+
+        // Remove and re-render each entity
+        for (const oldObject of entitiesToUpdate) {
+            const entity = oldObject.userData.entity;
+            if (!entity) {
+                continue;
+            }
+
+            // Re-render the entity (renderEntity will resolve color and linetype from layer)
+            const newObject = this.renderEntity(entity, this.parsedDxf);
+            if (newObject) {
+                newObject.userData.entity = entity;
+                newObject.userData.layer = entity.layer;
+                newObject.visible = oldObject.visible;
+
+                // Replace in entity group
+                const index = this.entityGroup.children.indexOf(oldObject);
+                if (index >= 0) {
+                    this.entityGroup.children[index] = newObject;
+                } else {
+                    this.entityGroup.add(newObject);
+                }
+            }
+
+            // Remove old object
+            this.entityGroup.remove(oldObject);
+        }
+
+        this.render();
+    }
+
     setDrawingColor(color: number): void {
         this.currentDrawingColor = color;
+    }
+
+    /**
+     * Gets the color for drawing on the current layer
+     * Returns the layer color if defined, otherwise the current drawing color
+     */
+    getCurrentLayerColor(): number {
+        if (this.parsedDxf) {
+            const layer = this.parsedDxf.layers.get(this.currentDrawingLayer);
+            if (layer) {
+                return aciToColor(layer.color);
+            }
+        }
+        return this.currentDrawingColor;
+    }
+
+    /**
+     * Gets the linetype for the current drawing layer
+     */
+    getCurrentLayerLineType(): DxfLineType | null {
+        if (this.parsedDxf) {
+            const layer = this.parsedDxf.layers.get(this.currentDrawingLayer);
+            if (layer?.lineType && layer.lineType.toUpperCase() !== 'CONTINUOUS') {
+                return this.parsedDxf.lineTypes.get(layer.lineType.toUpperCase()) || null;
+            }
+        }
+        return null;
     }
 
     // Add a drawing point (for command line coordinate input)
@@ -3563,8 +3724,10 @@ export class DxfRenderer {
             this.parsedDxf.entities.push(lineEntity);
         }
 
-        // Render the new line
-        const lineObject = this.renderLine(lineEntity, this.currentDrawingColor, null);
+        // Render the new line with layer color and linetype
+        const layerColor = this.getCurrentLayerColor();
+        const layerLineType = this.getCurrentLayerLineType();
+        const lineObject = this.renderLine(lineEntity, layerColor, layerLineType);
         lineObject.userData.entity = lineEntity;
         lineObject.userData.layer = lineEntity.layer;
         this.entityGroup.add(lineObject);
@@ -3602,8 +3765,10 @@ export class DxfRenderer {
             this.parsedDxf.entities.push(circleEntity);
         }
 
-        // Render the new circle
-        const circleObject = this.renderCircle(circleEntity, this.currentDrawingColor, null);
+        // Render the new circle with layer color and linetype
+        const layerColor = this.getCurrentLayerColor();
+        const layerLineType = this.getCurrentLayerLineType();
+        const circleObject = this.renderCircle(circleEntity, layerColor, layerLineType);
         circleObject.userData.entity = circleEntity;
         circleObject.userData.layer = circleEntity.layer;
         this.entityGroup.add(circleObject);
@@ -3650,8 +3815,10 @@ export class DxfRenderer {
             this.parsedDxf.entities.push(arcEntity);
         }
 
-        // Render the new arc
-        const arcObject = this.renderArc(arcEntity, this.currentDrawingColor, null);
+        // Render the new arc with layer color and linetype
+        const layerColor = this.getCurrentLayerColor();
+        const layerLineType = this.getCurrentLayerLineType();
+        const arcObject = this.renderArc(arcEntity, layerColor, layerLineType);
         arcObject.userData.entity = arcEntity;
         arcObject.userData.layer = arcEntity.layer;
         this.entityGroup.add(arcObject);
@@ -4220,8 +4387,9 @@ export class DxfRenderer {
             this.parsedDxf.entities.push(textEntity);
         }
 
-        // Render the new text
-        const textObject = this.renderText(textEntity, this.currentDrawingColor);
+        // Render the new text with layer color
+        const layerColor = this.getCurrentLayerColor();
+        const textObject = this.renderText(textEntity, layerColor);
         textObject.userData.entity = textEntity;
         textObject.userData.layer = textEntity.layer;
         this.entityGroup.add(textObject);

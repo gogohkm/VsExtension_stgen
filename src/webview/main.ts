@@ -56,6 +56,11 @@ class DxfViewerApp {
             () => this.renderer!.getCamera()
         );
 
+        // Set up callback for when drawing is complete to update layer panel
+        this.renderer.setOnDrawingComplete(() => {
+            this.refreshLayerPanelIfVisible();
+        });
+
         // Register CAD commands to the command stack
         registerCadCommands();
 
@@ -1145,6 +1150,18 @@ class DxfViewerApp {
         }
     }
 
+    /**
+     * Refresh layer panel if it's currently visible
+     * Called when entities are added/removed
+     */
+    private refreshLayerPanelIfVisible(): void {
+        const panel = document.getElementById('layer-panel');
+        if (panel?.classList.contains('visible')) {
+            this.updateLayerList();
+            this.updateCurrentLayerDropdown();
+        }
+    }
+
     private toggleSnapPanel(visible?: boolean): void {
         const panel = document.getElementById('snap-panel');
         const btn = document.getElementById('btn-snap-settings');
@@ -1212,47 +1229,172 @@ class DxfViewerApp {
         if (!listContainer || !this.renderer) return;
 
         const layers = this.renderer.getLayers();
+        const lineTypes = this.renderer.getAvailableLineTypes();
         listContainer.innerHTML = '';
 
         for (const layer of layers) {
             const item = document.createElement('div');
             item.className = 'layer-item';
 
+            // Visibility checkbox
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = layer.visible;
-            checkbox.addEventListener('change', () => {
+            checkbox.title = 'Toggle visibility';
+            checkbox.addEventListener('change', (e) => {
+                e.stopPropagation();
                 this.renderer?.toggleLayerVisibility(layer.name, checkbox.checked);
             });
 
-            const colorBox = document.createElement('div');
-            colorBox.className = 'layer-color';
-            colorBox.style.backgroundColor = '#' + layer.color.toString(16).padStart(6, '0');
+            // Color picker
+            const colorPicker = document.createElement('input');
+            colorPicker.type = 'color';
+            colorPicker.className = 'layer-color-picker';
+            colorPicker.value = '#' + layer.color.toString(16).padStart(6, '0');
+            colorPicker.title = 'Click to change layer color';
+            colorPicker.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const hexColor = colorPicker.value;
+                // Convert hex to ACI (approximate - use closest ACI color)
+                const aciColor = this.hexToAci(hexColor);
+                this.renderer?.setLayerColor(layer.name, aciColor);
+                this.commandLine?.print(`Layer "${layer.name}" color changed`, 'success');
+            });
+            colorPicker.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
 
+            // Layer name
             const nameSpan = document.createElement('span');
             nameSpan.className = 'layer-name';
             nameSpan.textContent = layer.name;
             nameSpan.title = layer.name;
 
+            // Linetype dropdown
+            const lineTypeSelect = document.createElement('select');
+            lineTypeSelect.className = 'layer-linetype-select';
+            lineTypeSelect.title = 'Layer linetype';
+
+            // Add standard linetypes if not in the list
+            const standardLineTypes = [
+                { name: 'CONTINUOUS', description: 'Solid line' },
+                { name: 'DASHED', description: 'Dashed line' },
+                { name: 'HIDDEN', description: 'Hidden line' },
+                { name: 'CENTER', description: 'Center line' },
+                { name: 'DASHDOT', description: 'Dash dot line' },
+                { name: 'PHANTOM', description: 'Phantom line' },
+                { name: 'DOT', description: 'Dotted line' }
+            ];
+
+            const allLineTypes = [...standardLineTypes];
+            for (const lt of lineTypes) {
+                if (!allLineTypes.find(t => t.name === lt.name)) {
+                    allLineTypes.push(lt);
+                }
+            }
+
+            for (const lt of allLineTypes) {
+                const option = document.createElement('option');
+                option.value = lt.name;
+                option.textContent = lt.name;
+                option.title = lt.description;
+                if (lt.name === layer.lineType) {
+                    option.selected = true;
+                }
+                lineTypeSelect.appendChild(option);
+            }
+
+            lineTypeSelect.addEventListener('change', (e) => {
+                e.stopPropagation();
+                this.renderer?.setLayerLineType(layer.name, lineTypeSelect.value);
+                this.commandLine?.print(`Layer "${layer.name}" linetype set to ${lineTypeSelect.value}`, 'success');
+            });
+            lineTypeSelect.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+
+            // Entity count
             const countSpan = document.createElement('span');
             countSpan.className = 'layer-count';
             countSpan.textContent = `(${layer.entityCount})`;
 
             item.appendChild(checkbox);
-            item.appendChild(colorBox);
+            item.appendChild(colorPicker);
             item.appendChild(nameSpan);
+            item.appendChild(lineTypeSelect);
             item.appendChild(countSpan);
 
-            // Click on layer item toggles visibility
-            item.addEventListener('click', (e) => {
-                if (e.target !== checkbox) {
-                    checkbox.checked = !checkbox.checked;
-                    this.renderer?.toggleLayerVisibility(layer.name, checkbox.checked);
-                }
+            // Click on layer name sets it as current
+            nameSpan.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.renderer?.setDrawingLayer(layer.name);
+                this.updateCurrentLayerDropdown();
+                this.commandLine?.print(`Current layer set to: ${layer.name}`, 'success');
             });
 
             listContainer.appendChild(item);
         }
+    }
+
+    /**
+     * Convert hex color to closest ACI (AutoCAD Color Index) color
+     */
+    private hexToAci(hexColor: string): number {
+        // Parse hex color
+        const hex = hexColor.replace('#', '');
+        const r = parseInt(hex.substring(0, 2), 16);
+        const g = parseInt(hex.substring(2, 4), 16);
+        const b = parseInt(hex.substring(4, 6), 16);
+
+        // Standard ACI color palette (simplified - most common colors)
+        const aciColors: Array<{ aci: number; r: number; g: number; b: number }> = [
+            { aci: 1, r: 255, g: 0, b: 0 },       // Red
+            { aci: 2, r: 255, g: 255, b: 0 },     // Yellow
+            { aci: 3, r: 0, g: 255, b: 0 },       // Green
+            { aci: 4, r: 0, g: 255, b: 255 },     // Cyan
+            { aci: 5, r: 0, g: 0, b: 255 },       // Blue
+            { aci: 6, r: 255, g: 0, b: 255 },     // Magenta
+            { aci: 7, r: 255, g: 255, b: 255 },   // White
+            { aci: 8, r: 128, g: 128, b: 128 },   // Gray
+            { aci: 9, r: 192, g: 192, b: 192 },   // Light gray
+            { aci: 10, r: 255, g: 0, b: 0 },      // Red (light)
+            { aci: 30, r: 255, g: 127, b: 0 },    // Orange
+            { aci: 40, r: 255, g: 191, b: 0 },    // Gold
+            { aci: 50, r: 255, g: 255, b: 0 },    // Yellow
+            { aci: 70, r: 127, g: 255, b: 0 },    // Lime
+            { aci: 90, r: 0, g: 255, b: 0 },      // Green
+            { aci: 110, r: 0, g: 255, b: 127 },   // Spring green
+            { aci: 130, r: 0, g: 255, b: 255 },   // Cyan
+            { aci: 150, r: 0, g: 127, b: 255 },   // Sky blue
+            { aci: 170, r: 0, g: 0, b: 255 },     // Blue
+            { aci: 190, r: 127, g: 0, b: 255 },   // Purple
+            { aci: 210, r: 255, g: 0, b: 255 },   // Magenta
+            { aci: 230, r: 255, g: 0, b: 127 },   // Rose
+            { aci: 250, r: 51, g: 51, b: 51 },    // Dark gray
+            { aci: 251, r: 80, g: 80, b: 80 },    // Gray
+            { aci: 252, r: 105, g: 105, b: 105 }, // Gray
+            { aci: 253, r: 130, g: 130, b: 130 }, // Gray
+            { aci: 254, r: 190, g: 190, b: 190 }, // Light gray
+            { aci: 255, r: 255, g: 255, b: 255 }, // White
+        ];
+
+        // Find closest ACI color
+        let closestAci = 7;
+        let minDistance = Infinity;
+
+        for (const aciColor of aciColors) {
+            const distance = Math.sqrt(
+                Math.pow(r - aciColor.r, 2) +
+                Math.pow(g - aciColor.g, 2) +
+                Math.pow(b - aciColor.b, 2)
+            );
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestAci = aciColor.aci;
+            }
+        }
+
+        return closestAci;
     }
 
     private handleMessage(message: any): void {
