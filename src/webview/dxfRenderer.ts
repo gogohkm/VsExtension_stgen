@@ -4,6 +4,9 @@
  */
 
 import * as THREE from 'three';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import {
     ParsedDxf,
     DxfEntity,
@@ -107,6 +110,7 @@ const SNAP_COLORS: Record<SnapType, number> = {
 class MaterialCache {
     private lineBasicMaterials: Map<number, THREE.LineBasicMaterial> = new Map();
     private lineDashedMaterials: Map<string, THREE.LineDashedMaterial> = new Map();
+    private lineMaterials: Map<string, LineMaterial> = new Map();
     private meshMaterials: Map<string, THREE.MeshBasicMaterial> = new Map();
     private pointMaterials: Map<string, THREE.PointsMaterial> = new Map();
 
@@ -125,6 +129,24 @@ class MaterialCache {
         if (!material) {
             material = new THREE.LineDashedMaterial({ color, dashSize, gapSize, scale: 1 });
             this.lineDashedMaterials.set(key, material);
+        }
+        return material;
+    }
+
+    getLineMaterial(color: number, lineWidth: number, resolution: THREE.Vector2): LineMaterial {
+        const key = `${color}-${lineWidth}`;
+        let material = this.lineMaterials.get(key);
+        if (!material) {
+            material = new LineMaterial({
+                color,
+                linewidth: lineWidth, // in pixels
+                resolution,
+                worldUnits: false // Use screen pixels for line width
+            });
+            this.lineMaterials.set(key, material);
+        } else {
+            // Update resolution if material already exists
+            material.resolution.copy(resolution);
         }
         return material;
     }
@@ -157,11 +179,13 @@ class MaterialCache {
     clear(): void {
         this.lineBasicMaterials.forEach(m => m.dispose());
         this.lineDashedMaterials.forEach(m => m.dispose());
+        this.lineMaterials.forEach(m => m.dispose());
         this.meshMaterials.forEach(m => m.dispose());
         this.pointMaterials.forEach(m => m.dispose());
 
         this.lineBasicMaterials.clear();
         this.lineDashedMaterials.clear();
+        this.lineMaterials.clear();
         this.meshMaterials.clear();
         this.pointMaterials.clear();
     }
@@ -566,16 +590,19 @@ export class DxfRenderer {
         // Resolve linetype
         const lineType = this.resolveLineType(entity, dxf);
 
+        // Resolve line weight (in pixels)
+        const lineWidth = this.resolveLineWeight(entity, dxf);
+
         switch (entity.type) {
             case 'LINE':
-                return this.renderLine(entity as DxfLine, color, lineType);
+                return this.renderLine(entity as DxfLine, color, lineType, lineWidth);
             case 'CIRCLE':
-                return this.renderCircle(entity as DxfCircle, color, lineType);
+                return this.renderCircle(entity as DxfCircle, color, lineType, lineWidth);
             case 'ARC':
-                return this.renderArc(entity as DxfArc, color, lineType);
+                return this.renderArc(entity as DxfArc, color, lineType, lineWidth);
             case 'POLYLINE':
             case 'LWPOLYLINE':
-                return this.renderPolyline(entity as DxfPolyline, color, lineType);
+                return this.renderPolyline(entity as DxfPolyline, color, lineType, lineWidth);
             case 'TEXT':
             case 'MTEXT':
                 return this.renderText(entity as DxfText, color);
@@ -584,9 +611,9 @@ export class DxfRenderer {
             case 'INSERT':
                 return this.renderInsert(entity as DxfInsert, color, dxf);
             case 'ELLIPSE':
-                return this.renderEllipse(entity as DxfEllipse, color, lineType);
+                return this.renderEllipse(entity as DxfEllipse, color, lineType, lineWidth);
             case 'SPLINE':
-                return this.renderSpline(entity as DxfSpline, color, lineType);
+                return this.renderSpline(entity as DxfSpline, color, lineType, lineWidth);
             case 'HATCH':
                 return this.renderHatch(entity as DxfHatch, color);
             case 'DIMENSION':
@@ -598,7 +625,7 @@ export class DxfRenderer {
             case 'ATTDEF':
                 return this.renderAttrib(entity as DxfAttrib, color);
             case 'LEADER':
-                return this.renderLeader(entity as DxfLeader, color);
+                return this.renderLeader(entity as DxfLeader, color, lineWidth);
             case 'WIPEOUT':
                 return this.renderWipeout(entity as DxfWipeout);
             default:
@@ -634,6 +661,28 @@ export class DxfRenderer {
         return dxf.lineTypes.get(lineTypeName) || null;
     }
 
+    /**
+     * Resolve line weight for an entity
+     * Returns line width in pixels (1 = default thin line)
+     */
+    private resolveLineWeight(entity: DxfEntity, dxf: ParsedDxf): number {
+        // Get layer line weight if available
+        const layer = dxf.layers.get(entity.layer);
+        const layerLineWeight = layer?.lineWeight;
+
+        // lineWeight is in mm (e.g., 0.25, 0.50, 1.00, 2.00)
+        // Special values: -1 = ByBlock, -2 = ByLayer, -3 = Default, 0 = Default
+        if (layerLineWeight === undefined || layerLineWeight <= 0) {
+            return 1; // Default thin line
+        }
+
+        // Convert mm to pixels: approximately 1mm = 4 pixels at 96 DPI
+        // But for better visibility, use a more aggressive scaling
+        // 0.25mm -> 1px, 0.50mm -> 2px, 1.00mm -> 4px, 2.00mm -> 8px
+        const pixelWidth = Math.max(1, Math.round(layerLineWeight * 4));
+        return Math.min(pixelWidth, 20); // Cap at 20 pixels
+    }
+
     private createLineMaterial(color: number, lineType: DxfLineType | null): THREE.Material {
         if (!lineType || lineType.pattern.length === 0) {
             return this.materialCache.getLineBasicMaterial(color);
@@ -647,7 +696,23 @@ export class DxfRenderer {
         return this.materialCache.getLineDashedMaterial(color, Math.abs(dashSize), Math.abs(gapSize));
     }
 
-    private renderLine(line: DxfLine, color: number, lineType: DxfLineType | null): THREE.Line {
+    private renderLine(line: DxfLine, color: number, lineType: DxfLineType | null, lineWidth: number = 1): THREE.Object3D {
+        // Use Line2 for thick lines (lineWidth >= 2, which is 0.50mm or more)
+        if (lineWidth >= 2 && (!lineType || lineType.pattern.length === 0)) {
+            const geometry = new LineGeometry();
+            geometry.setPositions([
+                line.start.x, line.start.y, 0,
+                line.end.x, line.end.y, 0
+            ]);
+
+            const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+            const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+            const line2 = new Line2(geometry, material);
+            line2.computeLineDistances();
+            return line2;
+        }
+
+        // Use regular THREE.Line for thin lines or dashed lines
         const geometry = new THREE.BufferGeometry();
         const points = [
             new THREE.Vector3(line.start.x, line.start.y, 0),
@@ -666,21 +731,39 @@ export class DxfRenderer {
         return lineObj;
     }
 
-    private renderCircle(circle: DxfCircle, color: number, lineType: DxfLineType | null): THREE.Line {
+    private renderCircle(circle: DxfCircle, color: number, lineType: DxfLineType | null, lineWidth: number = 1): THREE.Object3D {
         const segments = 64;
-        const geometry = new THREE.BufferGeometry();
-        const points: THREE.Vector3[] = [];
+        const positions: number[] = [];
 
         for (let i = 0; i <= segments; i++) {
             const angle = (i / segments) * Math.PI * 2;
-            points.push(new THREE.Vector3(
+            positions.push(
                 circle.center.x + Math.cos(angle) * circle.radius,
                 circle.center.y + Math.sin(angle) * circle.radius,
                 0
-            ));
+            );
         }
 
+        // Use Line2 for thick lines (lineWidth >= 2, which is 0.50mm or more)
+        if (lineWidth >= 2 && (!lineType || lineType.pattern.length === 0)) {
+            const geometry = new LineGeometry();
+            geometry.setPositions(positions);
+
+            const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+            const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+            const line2 = new Line2(geometry, material);
+            line2.computeLineDistances();
+            return line2;
+        }
+
+        // Use regular THREE.Line for thin lines or dashed lines
+        const geometry = new THREE.BufferGeometry();
+        const points = [];
+        for (let i = 0; i < positions.length; i += 3) {
+            points.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+        }
         geometry.setFromPoints(points);
+
         const material = this.createLineMaterial(color, lineType);
         const lineObj = new THREE.Line(geometry, material);
 
@@ -691,10 +774,8 @@ export class DxfRenderer {
         return lineObj;
     }
 
-    private renderArc(arc: DxfArc, color: number, lineType: DxfLineType | null): THREE.Line {
+    private renderArc(arc: DxfArc, color: number, lineType: DxfLineType | null, lineWidth: number = 1): THREE.Object3D {
         const segments = 64;
-        const geometry = new THREE.BufferGeometry();
-        const points: THREE.Vector3[] = [];
 
         // Convert degrees to radians
         let startAngle = arc.startAngle * Math.PI / 180;
@@ -708,16 +789,36 @@ export class DxfRenderer {
         const arcAngle = endAngle - startAngle;
         const segmentCount = Math.max(8, Math.ceil(segments * arcAngle / (Math.PI * 2)));
 
+        const positions: number[] = [];
         for (let i = 0; i <= segmentCount; i++) {
             const angle = startAngle + (i / segmentCount) * arcAngle;
-            points.push(new THREE.Vector3(
+            positions.push(
                 arc.center.x + Math.cos(angle) * arc.radius,
                 arc.center.y + Math.sin(angle) * arc.radius,
                 0
-            ));
+            );
         }
 
+        // Use Line2 for thick lines (lineWidth >= 2, which is 0.50mm or more)
+        if (lineWidth >= 2 && (!lineType || lineType.pattern.length === 0)) {
+            const geometry = new LineGeometry();
+            geometry.setPositions(positions);
+
+            const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+            const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+            const line2 = new Line2(geometry, material);
+            line2.computeLineDistances();
+            return line2;
+        }
+
+        // Use regular THREE.Line for thin lines or dashed lines
+        const geometry = new THREE.BufferGeometry();
+        const points = [];
+        for (let i = 0; i < positions.length; i += 3) {
+            points.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+        }
         geometry.setFromPoints(points);
+
         const material = this.createLineMaterial(color, lineType);
         const lineObj = new THREE.Line(geometry, material);
 
@@ -728,19 +829,39 @@ export class DxfRenderer {
         return lineObj;
     }
 
-    private renderPolyline(polyline: DxfPolyline, color: number, lineType: DxfLineType | null): THREE.Line {
+    private renderPolyline(polyline: DxfPolyline, color: number, lineType: DxfLineType | null, lineWidth: number = 1): THREE.Object3D {
         if (polyline.vertices.length < 2) {
             return new THREE.Line();
         }
 
-        const geometry = new THREE.BufferGeometry();
-        const points = polyline.vertices.map(v => new THREE.Vector3(v.x, v.y, 0));
-
-        if (polyline.closed && points.length > 0) {
-            points.push(points[0].clone());
+        const positions: number[] = [];
+        for (const v of polyline.vertices) {
+            positions.push(v.x, v.y, 0);
+        }
+        if (polyline.closed && polyline.vertices.length > 0) {
+            positions.push(polyline.vertices[0].x, polyline.vertices[0].y, 0);
         }
 
+        // Use Line2 for thick lines (lineWidth >= 2, which is 0.50mm or more)
+        if (lineWidth >= 2 && (!lineType || lineType.pattern.length === 0)) {
+            const geometry = new LineGeometry();
+            geometry.setPositions(positions);
+
+            const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+            const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+            const line2 = new Line2(geometry, material);
+            line2.computeLineDistances();
+            return line2;
+        }
+
+        // Use regular THREE.Line for thin lines or dashed lines
+        const geometry = new THREE.BufferGeometry();
+        const points = [];
+        for (let i = 0; i < positions.length; i += 3) {
+            points.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+        }
         geometry.setFromPoints(points);
+
         const material = this.createLineMaterial(color, lineType);
         const lineObj = new THREE.Line(geometry, material);
 
@@ -890,10 +1011,8 @@ export class DxfRenderer {
         return group;
     }
 
-    private renderEllipse(ellipse: DxfEllipse, color: number, lineType: DxfLineType | null): THREE.Line {
+    private renderEllipse(ellipse: DxfEllipse, color: number, lineType: DxfLineType | null, lineWidth: number = 1): THREE.Object3D {
         const segments = 64;
-        const geometry = new THREE.BufferGeometry();
-        const points: THREE.Vector3[] = [];
 
         // Calculate major and minor axes
         const majorLength = Math.sqrt(
@@ -913,6 +1032,7 @@ export class DxfRenderer {
         const angleRange = endAngle - startAngle;
         const segmentCount = Math.max(8, Math.ceil(segments * angleRange / (Math.PI * 2)));
 
+        const positions: number[] = [];
         for (let i = 0; i <= segmentCount; i++) {
             const t = startAngle + (i / segmentCount) * angleRange;
             // Parametric ellipse
@@ -921,14 +1041,33 @@ export class DxfRenderer {
             // Rotate to match major axis orientation
             const rotatedX = x * Math.cos(rotation) - y * Math.sin(rotation);
             const rotatedY = x * Math.sin(rotation) + y * Math.cos(rotation);
-            points.push(new THREE.Vector3(
+            positions.push(
                 ellipse.center.x + rotatedX,
                 ellipse.center.y + rotatedY,
                 0
-            ));
+            );
         }
 
+        // Use Line2 for thick lines (lineWidth >= 2, which is 0.50mm or more)
+        if (lineWidth >= 2 && (!lineType || lineType.pattern.length === 0)) {
+            const geometry = new LineGeometry();
+            geometry.setPositions(positions);
+
+            const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+            const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+            const line2 = new Line2(geometry, material);
+            line2.computeLineDistances();
+            return line2;
+        }
+
+        // Use regular THREE.Line for thin lines or dashed lines
+        const geometry = new THREE.BufferGeometry();
+        const points = [];
+        for (let i = 0; i < positions.length; i += 3) {
+            points.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+        }
         geometry.setFromPoints(points);
+
         const material = this.createLineMaterial(color, lineType);
         const lineObj = new THREE.Line(geometry, material);
 
@@ -939,36 +1078,54 @@ export class DxfRenderer {
         return lineObj;
     }
 
-    private renderSpline(spline: DxfSpline, color: number, lineType: DxfLineType | null): THREE.Line {
-        const geometry = new THREE.BufferGeometry();
-        const points: THREE.Vector3[] = [];
-
+    private renderSpline(spline: DxfSpline, color: number, lineType: DxfLineType | null, lineWidth: number = 1): THREE.Object3D {
         // Use control points or fit points depending on what's available
         const sourcePoints = spline.controlPoints.length > 0 ? spline.controlPoints : spline.fitPoints;
 
         if (sourcePoints.length < 2) {
+            const geometry = new THREE.BufferGeometry();
             return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
         }
 
+        const positions: number[] = [];
         if (spline.degree >= 2 && sourcePoints.length >= 3) {
             // Approximate spline using Catmull-Rom-like interpolation
             const segments = Math.max(sourcePoints.length * 10, 50);
             for (let i = 0; i <= segments; i++) {
                 const t = i / segments;
                 const point = this.interpolateSpline(sourcePoints, t, spline.closed);
-                points.push(new THREE.Vector3(point.x, point.y, 0));
+                positions.push(point.x, point.y, 0);
             }
         } else {
             // Fall back to polyline for simple cases
             for (const p of sourcePoints) {
-                points.push(new THREE.Vector3(p.x, p.y, 0));
+                positions.push(p.x, p.y, 0);
             }
             if (spline.closed && sourcePoints.length > 0) {
-                points.push(new THREE.Vector3(sourcePoints[0].x, sourcePoints[0].y, 0));
+                positions.push(sourcePoints[0].x, sourcePoints[0].y, 0);
             }
         }
 
+        // Use Line2 for thick lines (lineWidth >= 2, which is 0.50mm or more)
+        if (lineWidth >= 2 && (!lineType || lineType.pattern.length === 0)) {
+            const geometry = new LineGeometry();
+            geometry.setPositions(positions);
+
+            const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+            const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+            const line2 = new Line2(geometry, material);
+            line2.computeLineDistances();
+            return line2;
+        }
+
+        // Use regular THREE.Line for thin lines or dashed lines
+        const geometry = new THREE.BufferGeometry();
+        const points = [];
+        for (let i = 0; i < positions.length; i += 3) {
+            points.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+        }
         geometry.setFromPoints(points);
+
         const material = this.createLineMaterial(color, lineType);
         const lineObj = new THREE.Line(geometry, material);
 
@@ -1539,7 +1696,7 @@ export class DxfRenderer {
         return sprite;
     }
 
-    private renderLeader(leader: DxfLeader, color: number): THREE.Group {
+    private renderLeader(leader: DxfLeader, color: number, lineWidth: number = 1): THREE.Group {
         const group = new THREE.Group();
 
         if (leader.vertices.length < 2) {
@@ -1547,10 +1704,24 @@ export class DxfRenderer {
         }
 
         // Draw leader line
-        const points = leader.vertices.map(v => new THREE.Vector3(v.x, v.y, 0));
-        const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
-        const lineMaterial = this.materialCache.getLineBasicMaterial(color);
-        group.add(new THREE.Line(lineGeometry, lineMaterial));
+        if (lineWidth >= 2) {
+            const positions: number[] = [];
+            for (const v of leader.vertices) {
+                positions.push(v.x, v.y, 0);
+            }
+            const geometry = new LineGeometry();
+            geometry.setPositions(positions);
+            const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+            const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+            const line2 = new Line2(geometry, material);
+            line2.computeLineDistances();
+            group.add(line2);
+        } else {
+            const points = leader.vertices.map(v => new THREE.Vector3(v.x, v.y, 0));
+            const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+            const lineMaterial = this.materialCache.getLineBasicMaterial(color);
+            group.add(new THREE.Line(lineGeometry, lineMaterial));
+        }
 
         // Draw arrowhead if enabled
         if (leader.hasArrowhead && leader.vertices.length >= 2) {
@@ -1566,22 +1737,41 @@ export class DxfRenderer {
                 const angle = Math.atan2(dy, dx);
                 const arrowAngle = Math.PI / 6;
 
-                const arrowPoints = [
-                    new THREE.Vector3(
+                if (lineWidth >= 2) {
+                    const positions = [
                         start.x + arrowSize * Math.cos(angle - arrowAngle),
                         start.y + arrowSize * Math.sin(angle - arrowAngle),
-                        0
-                    ),
-                    new THREE.Vector3(start.x, start.y, 0),
-                    new THREE.Vector3(
+                        0,
+                        start.x, start.y, 0,
                         start.x + arrowSize * Math.cos(angle + arrowAngle),
                         start.y + arrowSize * Math.sin(angle + arrowAngle),
                         0
-                    )
-                ];
-
-                const arrowGeometry = new THREE.BufferGeometry().setFromPoints(arrowPoints);
-                group.add(new THREE.Line(arrowGeometry, lineMaterial));
+                    ];
+                    const geometry = new LineGeometry();
+                    geometry.setPositions(positions);
+                    const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+                    const material = this.materialCache.getLineMaterial(color, lineWidth, resolution);
+                    const line2 = new Line2(geometry, material);
+                    line2.computeLineDistances();
+                    group.add(line2);
+                } else {
+                    const arrowPoints = [
+                        new THREE.Vector3(
+                            start.x + arrowSize * Math.cos(angle - arrowAngle),
+                            start.y + arrowSize * Math.sin(angle - arrowAngle),
+                            0
+                        ),
+                        new THREE.Vector3(start.x, start.y, 0),
+                        new THREE.Vector3(
+                            start.x + arrowSize * Math.cos(angle + arrowAngle),
+                            start.y + arrowSize * Math.sin(angle + arrowAngle),
+                            0
+                        )
+                    ];
+                    const arrowGeometry = new THREE.BufferGeometry().setFromPoints(arrowPoints);
+                    const lineMaterial = this.materialCache.getLineBasicMaterial(color);
+                    group.add(new THREE.Line(arrowGeometry, lineMaterial));
+                }
             }
         }
 
@@ -3625,7 +3815,7 @@ export class DxfRenderer {
     }
 
     /**
-     * Gets the current layer's line weight
+     * Gets the current layer's line weight (in mm)
      */
     getCurrentLayerLineWeight(): number {
         if (this.parsedDxf) {
@@ -3635,6 +3825,20 @@ export class DxfRenderer {
             }
         }
         return 0.25; // Default
+    }
+
+    /**
+     * Convert line weight (in mm) to pixel width for rendering
+     */
+    private convertLineWeightToPixels(lineWeight: number): number {
+        // lineWeight is in mm (e.g., 0.25, 0.50, 1.00)
+        // Convert to pixels: approximately 1mm = 4 pixels at 96 DPI
+        if (lineWeight <= 0) {
+            return 1; // Default thin line
+        }
+        // 0.25mm -> 1px, 0.50mm -> 2px, 1.00mm -> 4px, 2.00mm -> 8px
+        const pixelWidth = Math.round(lineWeight * 4);
+        return Math.min(Math.max(1, pixelWidth), 20); // Clamp between 1 and 20 pixels
     }
 
     /**
@@ -3770,10 +3974,12 @@ export class DxfRenderer {
             this.parsedDxf.entities.push(lineEntity);
         }
 
-        // Render the new line with layer color and linetype
+        // Render the new line with layer color, linetype, and lineweight
         const layerColor = this.getCurrentLayerColor();
         const layerLineType = this.getCurrentLayerLineType();
-        const lineObject = this.renderLine(lineEntity, layerColor, layerLineType);
+        const layerLineWeight = this.getCurrentLayerLineWeight();
+        const lineWidth = this.convertLineWeightToPixels(layerLineWeight);
+        const lineObject = this.renderLine(lineEntity, layerColor, layerLineType, lineWidth);
         lineObject.userData.entity = lineEntity;
         lineObject.userData.layer = lineEntity.layer;
         this.entityGroup.add(lineObject);
@@ -3811,10 +4017,12 @@ export class DxfRenderer {
             this.parsedDxf.entities.push(circleEntity);
         }
 
-        // Render the new circle with layer color and linetype
+        // Render the new circle with layer color, linetype, and lineweight
         const layerColor = this.getCurrentLayerColor();
         const layerLineType = this.getCurrentLayerLineType();
-        const circleObject = this.renderCircle(circleEntity, layerColor, layerLineType);
+        const layerLineWeight = this.getCurrentLayerLineWeight();
+        const lineWidth = this.convertLineWeightToPixels(layerLineWeight);
+        const circleObject = this.renderCircle(circleEntity, layerColor, layerLineType, lineWidth);
         circleObject.userData.entity = circleEntity;
         circleObject.userData.layer = circleEntity.layer;
         this.entityGroup.add(circleObject);
@@ -3861,10 +4069,12 @@ export class DxfRenderer {
             this.parsedDxf.entities.push(arcEntity);
         }
 
-        // Render the new arc with layer color and linetype
+        // Render the new arc with layer color, linetype, and lineweight
         const layerColor = this.getCurrentLayerColor();
         const layerLineType = this.getCurrentLayerLineType();
-        const arcObject = this.renderArc(arcEntity, layerColor, layerLineType);
+        const layerLineWeight = this.getCurrentLayerLineWeight();
+        const lineWidth = this.convertLineWeightToPixels(layerLineWeight);
+        const arcObject = this.renderArc(arcEntity, layerColor, layerLineType, lineWidth);
         arcObject.userData.entity = arcEntity;
         arcObject.userData.layer = arcEntity.layer;
         this.entityGroup.add(arcObject);
