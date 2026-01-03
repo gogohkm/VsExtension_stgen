@@ -92,6 +92,13 @@ export class AcOffsetCmd extends AcEdCommand {
                 continue;
             }
 
+            // Check if entity is on a locked layer
+            const layerName = threeObject.userData.layer || '0';
+            if (context.renderer.isLayerLocked(layerName)) {
+                context.commandLine.print(`Object is on locked layer "${layerName}"`, 'error');
+                continue;
+            }
+
             // Check if entity type is supported
             if (!['LINE', 'CIRCLE', 'ARC', 'POLYLINE', 'LWPOLYLINE'].includes(entity.type)) {
                 context.commandLine.print(`Cannot offset ${entity.type}`, 'error');

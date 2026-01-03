@@ -39,10 +39,11 @@ export class AcArcCmd extends AcEdCommand {
                 message: 'Specify start point of arc',
                 keywords: [
                     { displayName: 'Center', globalName: 'CENTER', localName: 'CE' }
-                ]
+                ],
+                allowNone: true
             });
 
-            if (startResult.status === PromptStatus.Cancel) {
+            if (startResult.status === PromptStatus.Cancel || startResult.status === PromptStatus.None) {
                 break;
             }
 

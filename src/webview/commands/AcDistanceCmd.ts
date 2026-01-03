@@ -33,10 +33,11 @@ export class AcDistanceCmd extends AcEdCommand {
 
             // Get first point
             const firstPointResult = await editor.getPoint({
-                message: 'Specify first point'
+                message: 'Specify first point',
+                allowNone: true
             });
 
-            if (firstPointResult.status === PromptStatus.Cancel) {
+            if (firstPointResult.status === PromptStatus.Cancel || firstPointResult.status === PromptStatus.None) {
                 break;
             }
 

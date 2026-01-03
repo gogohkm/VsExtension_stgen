@@ -46,10 +46,11 @@ export class AcCircleCmd extends AcEdCommand {
                     { displayName: '3P', globalName: '3P' },
                     { displayName: '2P', globalName: '2P' },
                     { displayName: 'Ttr', globalName: 'TTR', localName: 'T' }
-                ]
+                ],
+                allowNone: true
             });
 
-            if (centerResult.status === PromptStatus.Cancel) {
+            if (centerResult.status === PromptStatus.Cancel || centerResult.status === PromptStatus.None) {
                 break;
             }
 

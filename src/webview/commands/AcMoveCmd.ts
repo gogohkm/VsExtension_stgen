@@ -95,9 +95,23 @@ export class AcMoveCmd extends AcEdCommand {
      */
     private moveSelectedEntities(context: EditorContext, dx: number, dy: number): number {
         const selectedObjects = context.renderer.getSelectedEntities();
-        const entities = selectedObjects
+
+        // Filter out entities on locked layers
+        const movableObjects = selectedObjects.filter(object => {
+            const layerName = object.userData.layer || '0';
+            return !context.renderer.isLayerLocked(layerName);
+        });
+
+        const lockedCount = selectedObjects.length - movableObjects.length;
+        if (lockedCount > 0) {
+            context.commandLine.print(`${lockedCount} object(s) on locked layer(s) - skipped`, 'response');
+        }
+
+        const entities = movableObjects
             .map(object => object.userData.entity as DxfEntity | undefined)
             .filter((entity): entity is DxfEntity => !!entity);
+
+        if (entities.length === 0) return 0;
 
         context.renderer.moveEntities(entities, dx, dy);
         context.renderer.clearSelection();

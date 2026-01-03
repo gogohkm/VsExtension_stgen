@@ -85,6 +85,13 @@ export class AcExtendCmd extends AcEdCommand {
                     continue;
                 }
 
+                // Check if entity is on a locked layer
+                const layerName = threeObject.userData.layer || '0';
+                if (context.renderer.isLayerLocked(layerName)) {
+                    context.commandLine.print(`Object is on locked layer "${layerName}"`, 'error');
+                    continue;
+                }
+
                 // Only lines and arcs can be extended
                 if (entity.type !== 'LINE' && entity.type !== 'ARC') {
                     context.commandLine.print(`Cannot extend ${entity.type}`, 'error');

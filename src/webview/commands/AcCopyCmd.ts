@@ -137,7 +137,18 @@ export class AcCopyCmd extends AcEdCommand {
         const selectedObjects = context.renderer.getSelectedEntities();
         const createdEntities: DxfEntity[] = [];
 
-        for (const object of selectedObjects) {
+        // Filter out entities on locked layers
+        const copyableObjects = selectedObjects.filter(object => {
+            const layerName = object.userData.layer || '0';
+            return !context.renderer.isLayerLocked(layerName);
+        });
+
+        const lockedCount = selectedObjects.length - copyableObjects.length;
+        if (lockedCount > 0) {
+            context.commandLine.print(`${lockedCount} object(s) on locked layer(s) - skipped`, 'response');
+        }
+
+        for (const object of copyableObjects) {
             const entity = object.userData.entity as DxfEntity;
             if (!entity) continue;
 

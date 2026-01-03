@@ -85,6 +85,13 @@ export class AcTrimCmd extends AcEdCommand {
                     continue;
                 }
 
+                // Check if entity is on a locked layer
+                const layerName = threeObject.userData.layer || '0';
+                if (context.renderer.isLayerLocked(layerName)) {
+                    context.commandLine.print(`Object is on locked layer "${layerName}"`, 'error');
+                    continue;
+                }
+
                 // Find intersections with cutting edges
                 const intersections = this.findIntersections(entity, cuttingEdges, context);
 

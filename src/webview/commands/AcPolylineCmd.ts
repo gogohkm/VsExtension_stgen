@@ -37,8 +37,13 @@ export class AcPolylineCmd extends AcEdCommand {
 
         // Get first point
         const firstPointResult = await editor.getPoint({
-            message: 'Specify start point'
+            message: 'Specify start point',
+            allowNone: true
         });
+
+        if (firstPointResult.status === PromptStatus.Cancel || firstPointResult.status === PromptStatus.None) {
+            return;
+        }
 
         if (firstPointResult.status !== PromptStatus.OK || !firstPointResult.value) {
             return;

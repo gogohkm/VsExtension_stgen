@@ -434,6 +434,8 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         <div class="layer-toolbar-props">
             <span class="layer-toolbar-prop-label">Color:</span>
             <div id="layer-toolbar-color" class="layer-toolbar-color-box" title="Layer Color"></div>
+            <span class="layer-toolbar-prop-label">LT:</span>
+            <span id="layer-toolbar-linetype" class="layer-toolbar-linetype" title="Line Type">Continuous</span>
             <span class="layer-toolbar-prop-label">LW:</span>
             <span id="layer-toolbar-lineweight" class="layer-toolbar-lineweight" title="Line Weight">0.25</span>
         </div>
@@ -579,6 +581,7 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         <div class="context-menu-section">
             <div class="context-menu-label">Draw</div>
             <div class="context-menu-item" data-command="LINE"><span class="menu-text">Line</span><span class="menu-shortcut">L</span></div>
+            <div class="context-menu-item" data-command="PLINE"><span class="menu-text">Polyline</span><span class="menu-shortcut">PL</span></div>
             <div class="context-menu-item" data-command="CIRCLE"><span class="menu-text">Circle</span><span class="menu-shortcut">C</span></div>
             <div class="context-menu-item" data-command="RECTANGLE"><span class="menu-text">Rectangle</span><span class="menu-shortcut">REC</span></div>
             <div class="context-menu-item" data-command="ARC"><span class="menu-text">Arc</span><span class="menu-shortcut">A</span></div>
@@ -605,13 +608,15 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         <div class="context-menu-separator"></div>
         <div class="context-menu-section">
             <div class="context-menu-label">View</div>
-            <div class="context-menu-item" data-command="FIT"><span class="menu-text">Zoom Fit</span><span class="menu-shortcut">F</span></div>
+            <div class="context-menu-item" data-command="FIT"><span class="menu-text">Zoom Extents</span><span class="menu-shortcut">ZE</span></div>
+            <div class="context-menu-item" data-command="ZOOMWINDOW"><span class="menu-text">Zoom Window</span><span class="menu-shortcut">ZW</span></div>
             <div class="context-menu-item" data-command="LAYER"><span class="menu-text">Layers</span><span class="menu-shortcut">LA</span></div>
             <div class="context-menu-item" data-command="PROPERTIES"><span class="menu-text">Properties</span><span class="menu-shortcut">PR</span></div>
         </div>
         <div class="context-menu-separator"></div>
         <div class="context-menu-section">
-            <div class="context-menu-label">Settings</div>
+            <div class="context-menu-label">Tools</div>
+            <div class="context-menu-item" data-command="DIST"><span class="menu-text">Distance</span><span class="menu-shortcut">DI</span></div>
             <div class="context-menu-item" data-command="SNAP"><span class="menu-text">Snap On/Off</span><span class="menu-shortcut">S</span></div>
             <div class="context-menu-item" data-command="ORTHO"><span class="menu-text">Ortho On/Off</span><span class="menu-shortcut">OR</span></div>
         </div>
@@ -624,7 +629,7 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         <div class="context-menu-separator"></div>
         <div class="context-menu-section">
             <div class="context-menu-label">File</div>
-            <div class="context-menu-item" data-command="SAVE"><span class="menu-text">Save</span><span class="menu-shortcut">S</span></div>
+            <div class="context-menu-item" data-command="SAVE"><span class="menu-text">Save</span><span class="menu-shortcut">Ctrl+S</span></div>
             <div class="context-menu-item" data-command="SAVEAS"><span class="menu-text">Save As</span><span class="menu-shortcut">SA</span></div>
         </div>
     </div>

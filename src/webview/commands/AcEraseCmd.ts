@@ -24,12 +24,31 @@ export class AcEraseCmd extends AcEdCommand {
         const selectedCount = context.renderer.getSelectedCount();
 
         if (selectedCount > 0) {
-            // Delete already selected entities
+            // Check for locked layers before deleting
+            const selectedEntities = context.renderer.getSelectedEntities();
+            const lockedCount = selectedEntities.filter(obj => {
+                const layerName = obj.userData.layer || '0';
+                return context.renderer.isLayerLocked(layerName);
+            }).length;
+
+            // Delete already selected entities (locked ones will be skipped by renderer)
             const deletedCount = context.renderer.deleteSelectedEntities();
-            context.commandLine.print(
-                `${deletedCount} ${deletedCount === 1 ? 'object' : 'objects'} erased`,
-                'success'
-            );
+
+            if (lockedCount > 0) {
+                context.commandLine.print(
+                    `${lockedCount} object(s) on locked layer(s) - skipped`,
+                    'response'
+                );
+            }
+
+            if (deletedCount > 0) {
+                context.commandLine.print(
+                    `${deletedCount} ${deletedCount === 1 ? 'object' : 'objects'} erased`,
+                    'success'
+                );
+            } else if (lockedCount === 0) {
+                context.commandLine.print('No objects erased', 'response');
+            }
             return;
         }
 
@@ -41,13 +60,28 @@ export class AcEraseCmd extends AcEdCommand {
         });
 
         if (result.status === PromptStatus.OK || result.status === PromptStatus.None) {
+            // Check for locked layers before deleting
+            const selectedEntities = context.renderer.getSelectedEntities();
+            const lockedCount = selectedEntities.filter(obj => {
+                const layerName = obj.userData.layer || '0';
+                return context.renderer.isLayerLocked(layerName);
+            }).length;
+
             const count = context.renderer.deleteSelectedEntities();
+
+            if (lockedCount > 0) {
+                context.commandLine.print(
+                    `${lockedCount} object(s) on locked layer(s) - skipped`,
+                    'response'
+                );
+            }
+
             if (count > 0) {
                 context.commandLine.print(
                     `${count} ${count === 1 ? 'object' : 'objects'} erased`,
                     'success'
                 );
-            } else {
+            } else if (lockedCount === 0) {
                 context.commandLine.print('No objects selected', 'response');
             }
         } else if (result.status === PromptStatus.Cancel) {

@@ -170,13 +170,15 @@ async function getTwoPoints(context: EditorContext, commandName: string): Promis
 
     // Get first point
     const firstPointResult = await editor.getPoint({
-        message: 'Specify first extension line origin'
+        message: 'Specify first extension line origin',
+        allowNone: true
     });
 
+    if (firstPointResult.status === PromptStatus.Cancel || firstPointResult.status === PromptStatus.None) {
+        return null;
+    }
+
     if (firstPointResult.status !== PromptStatus.OK || !firstPointResult.value) {
-        if (firstPointResult.status === PromptStatus.Cancel) {
-            context.commandLine.print('*Cancel*', 'error');
-        }
         return null;
     }
 

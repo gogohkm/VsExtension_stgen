@@ -33,10 +33,11 @@ export class AcRectangleCmd extends AcEdCommand {
 
             // Get first corner point
             const firstCornerResult = await editor.getPoint({
-                message: 'Specify first corner point'
+                message: 'Specify first corner point',
+                allowNone: true
             });
 
-            if (firstCornerResult.status === PromptStatus.Cancel) {
+            if (firstCornerResult.status === PromptStatus.Cancel || firstCornerResult.status === PromptStatus.None) {
                 break;
             }
 

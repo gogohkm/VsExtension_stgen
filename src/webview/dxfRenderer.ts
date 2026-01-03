@@ -2691,19 +2691,39 @@ export class DxfRenderer {
 
     deleteSelectedEntities(recordUndo: boolean = true): number {
         const selected = Array.from(this.selectedEntities);
-        const count = selected.length;
-        if (count === 0) return 0;
+        if (selected.length === 0) return 0;
 
-        const entities = selected
+        // Filter out entities on locked layers
+        const deletable: THREE.Object3D[] = [];
+        const lockedCount = { count: 0 };
+
+        for (const object of selected) {
+            const layerName = object.userData.layer || '0';
+            if (this.isLayerLocked(layerName)) {
+                lockedCount.count++;
+            } else {
+                deletable.push(object);
+            }
+        }
+
+        if (lockedCount.count > 0) {
+            console.log(`${lockedCount.count} object(s) on locked layer(s) - skipped`);
+        }
+
+        if (deletable.length === 0) return 0;
+
+        const entities = deletable
             .map(object => object.userData.entity as DxfEntity | undefined)
             .filter((entity): entity is DxfEntity => !!entity);
         const indices = this.parsedDxf
             ? entities.map(entity => this.parsedDxf!.entities.indexOf(entity))
             : [];
 
-        for (const object of selected) {
+        for (const object of deletable) {
             // Remove from scene
             this.entityGroup.remove(object);
+            // Also remove from selection
+            this.selectedEntities.delete(object);
 
             // Clean up materials
             this.originalMaterials.delete(object);
@@ -2724,7 +2744,6 @@ export class DxfRenderer {
             }
         }
 
-        this.selectedEntities.clear();
         this.updateSelectionStatus();
         this.render();
 
@@ -2732,7 +2751,7 @@ export class DxfRenderer {
             this.recordDeleteAction(entities, indices);
         }
 
-        return count;
+        return deletable.length;
     }
 
     // Delete entity by reference

@@ -173,34 +173,29 @@ class DxfViewerApp {
                 // Reserved for future select all functionality
             }
 
-            // Toggle snap (S key)
+            // Toggle snap (S key) - only when not in command
             if (e.key === 's' || e.key === 'S') {
-                if (!e.ctrlKey && !e.metaKey) {
+                if (!e.ctrlKey && !e.metaKey && !this.commandLine?.isCommandActive()) {
                     this.toggleSnap();
                     e.preventDefault();
+                    return;
                 }
             }
 
-            // Line drawing tool (L key)
-            if (e.key === 'l' || e.key === 'L') {
-                if (!e.ctrlKey && !e.metaKey) {
-                    this.startDrawingLine();
+            // For any letter key, route through command line instead of direct shortcuts
+            // This ensures commands are properly tracked and Enter key works correctly
+            if (/^[a-zA-Z0-9,.]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                // Focus command input and simulate key input
+                if (commandInput) {
+                    commandInput.focus();
+                    // Append the key to the input value
+                    const inputEl = commandInput as HTMLInputElement;
+                    inputEl.value += e.key;
+                    // Dispatch input event to trigger any listeners
+                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
                     e.preventDefault();
                 }
-            }
-
-            // Circle drawing tool (C key)
-            if (e.key === 'c' || e.key === 'C') {
-                if (!e.ctrlKey && !e.metaKey) {
-                    this.startDrawingCircle();
-                    e.preventDefault();
-                }
-            }
-
-            // Focus command line with any letter key
-            if (/^[a-zA-Z]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                // Focus command input and pass the key
-                commandInput?.focus();
+                return;
             }
         });
     }
@@ -609,9 +604,8 @@ class DxfViewerApp {
             this.setAnnotationModeIndicator(false);
         }
 
-        this.renderer.startDrawingLine();
-        this.updateDrawingModeIndicator();
-        this.setStatus('Line: Click first point');
+        // Use command line system for proper tracking
+        this.commandLine?.executeCommand('LINE');
     }
 
     private startDrawingCircle(): void {
@@ -623,9 +617,8 @@ class DxfViewerApp {
             this.setAnnotationModeIndicator(false);
         }
 
-        this.renderer.startDrawingCircle();
-        this.updateDrawingModeIndicator();
-        this.setStatus('Circle: Click center point');
+        // Use command line system for proper tracking
+        this.commandLine?.executeCommand('CIRCLE');
     }
 
     private cancelDrawing(): void {
@@ -758,13 +751,13 @@ class DxfViewerApp {
             this.toggleOrtho();
         });
 
-        // Drawing tools
+        // Drawing tools - all go through command line for proper tracking
         document.getElementById('btn-draw-line')?.addEventListener('click', () => {
-            this.startDrawingLine();
+            this.commandLine?.executeCommand('LINE');
         });
 
         document.getElementById('btn-draw-circle')?.addEventListener('click', () => {
-            this.startDrawingCircle();
+            this.commandLine?.executeCommand('CIRCLE');
         });
 
         document.getElementById('btn-draw-rect')?.addEventListener('click', () => {
@@ -1397,9 +1390,21 @@ class DxfViewerApp {
     // ========== Layer Toolbar (AutoCAD style) ==========
 
     private setupLayerToolbar(): void {
+        // Prevent focus stealing from layer toolbar buttons
+        const toolbar = document.getElementById('layer-toolbar');
+        if (toolbar) {
+            toolbar.addEventListener('mousedown', (e) => {
+                // Allow select dropdown to work normally
+                if ((e.target as HTMLElement).tagName !== 'SELECT') {
+                    e.preventDefault();
+                }
+            });
+        }
+
         // Close button
         document.getElementById('layer-toolbar-close')?.addEventListener('click', () => {
             this.toggleLayerToolbar(false);
+            this.commandLine?.focus();
         });
 
         // Layer select dropdown
@@ -1412,6 +1417,8 @@ class DxfViewerApp {
                 this.updateLayerToolbar();
                 this.commandLine?.print(`Current layer: ${layerName}`, 'success');
             }
+            // Restore focus to command line after selection
+            this.commandLine?.focus();
         });
 
         // Layer On/Off button
@@ -1459,6 +1466,11 @@ class DxfViewerApp {
         // Color box click - show color picker
         document.getElementById('layer-toolbar-color')?.addEventListener('click', () => {
             this.showLayerColorPicker();
+        });
+
+        // Linetype click - show linetype options
+        document.getElementById('layer-toolbar-linetype')?.addEventListener('click', () => {
+            this.showLayerLinetypePicker();
         });
 
         // Lineweight click - show lineweight options
@@ -1556,6 +1568,13 @@ class DxfViewerApp {
                 (colorBox as HTMLElement).dataset.colorIndex = currentLayerData.colorIndex.toString();
             }
 
+            // Update linetype display
+            const linetypeSpan = document.getElementById('layer-toolbar-linetype');
+            if (linetypeSpan) {
+                const lt = currentLayerData.lineType || 'Continuous';
+                linetypeSpan.textContent = lt;
+            }
+
             // Update lineweight display
             if (lineweightSpan) {
                 const lw = currentLayerData.lineWeight ?? 0.25;
@@ -1621,7 +1640,7 @@ class DxfViewerApp {
         const layerName = select?.value;
         if (!this.renderer || !layerName) return;
 
-        // ACI color options
+        // ACI color options - 16 standard colors
         const aciColors: { index: number; name: string; hex: string }[] = [
             { index: 1, name: 'Red', hex: '#ff0000' },
             { index: 2, name: 'Yellow', hex: '#ffff00' },
@@ -1630,8 +1649,15 @@ class DxfViewerApp {
             { index: 5, name: 'Blue', hex: '#0000ff' },
             { index: 6, name: 'Magenta', hex: '#ff00ff' },
             { index: 7, name: 'White', hex: '#ffffff' },
-            { index: 8, name: 'Gray', hex: '#808080' },
-            { index: 9, name: 'Light Gray', hex: '#c0c0c0' }
+            { index: 8, name: 'Dark Gray', hex: '#808080' },
+            { index: 9, name: 'Light Gray', hex: '#c0c0c0' },
+            { index: 10, name: 'Light Red', hex: '#ff8080' },
+            { index: 11, name: 'Light Yellow', hex: '#ffff80' },
+            { index: 12, name: 'Light Green', hex: '#80ff80' },
+            { index: 13, name: 'Light Cyan', hex: '#80ffff' },
+            { index: 14, name: 'Light Blue', hex: '#8080ff' },
+            { index: 15, name: 'Light Magenta', hex: '#ff80ff' },
+            { index: 250, name: 'Black', hex: '#000000' }
         ];
 
         // Create color picker popup
@@ -1671,6 +1697,7 @@ class DxfViewerApp {
                 this.updateLayerList();
                 this.commandLine?.print(`Layer ${layerName} color changed`, 'response');
                 popup.remove();
+                this.commandLine?.focus();
             });
         });
 
@@ -1679,6 +1706,7 @@ class DxfViewerApp {
             if (!popup.contains(e.target as Node) && e.target !== colorBox) {
                 popup.remove();
                 document.removeEventListener('click', closeHandler);
+                this.commandLine?.focus();
             }
         };
         setTimeout(() => document.addEventListener('click', closeHandler), 0);
@@ -1731,6 +1759,7 @@ class DxfViewerApp {
                 this.updateLayerList();
                 this.commandLine?.print(`Layer ${layerName} lineweight changed to ${lw.toFixed(2)}`, 'response');
                 popup.remove();
+                this.commandLine?.focus();
             });
         });
 
@@ -1739,6 +1768,87 @@ class DxfViewerApp {
             if (!popup.contains(e.target as Node) && e.target !== lwSpan) {
                 popup.remove();
                 document.removeEventListener('click', closeHandler);
+                this.commandLine?.focus();
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler), 0);
+    }
+
+    private showLayerLinetypePicker(): void {
+        const select = document.getElementById('layer-toolbar-select') as HTMLSelectElement;
+        const layerName = select?.value;
+        if (!this.renderer || !layerName) return;
+
+        // Standard linetype options (AutoCAD standard linetypes)
+        const linetypes = [
+            { name: 'CONTINUOUS', description: 'Solid line ________' },
+            { name: 'DASHED', description: 'Dashed __ __ __ __' },
+            { name: 'HIDDEN', description: 'Hidden _ _ _ _ _ _' },
+            { name: 'CENTER', description: 'Center ____ _ ____ _' },
+            { name: 'PHANTOM', description: 'Phantom _____ _ _ _____' },
+            { name: 'DOT', description: 'Dotted . . . . . . .' },
+            { name: 'DASHDOT', description: 'Dash dot ____ . ____' },
+            { name: 'BORDER', description: 'Border ____ __ ____' },
+            { name: 'DIVIDE', description: 'Divide ____ . . ____' }
+        ];
+
+        // Get any additional linetypes from the DXF file
+        const dxfLinetypes = this.renderer.getAvailableLineTypes?.() || [];
+        for (const lt of dxfLinetypes) {
+            if (!linetypes.find(l => l.name.toUpperCase() === lt.name.toUpperCase())) {
+                linetypes.push({ name: lt.name.toUpperCase(), description: lt.description || lt.name });
+            }
+        }
+
+        // Create linetype picker popup
+        const existingPopup = document.getElementById('layer-linetype-popup');
+        if (existingPopup) existingPopup.remove();
+
+        const popup = document.createElement('div');
+        popup.id = 'layer-linetype-popup';
+        popup.className = 'layer-popup';
+        popup.innerHTML = `
+            <div class="layer-popup-title">Select Line Type</div>
+            <div class="layer-linetype-list">
+                ${linetypes.map(lt => `
+                    <div class="layer-linetype-option" data-lt="${lt.name}">
+                        <span class="lt-name">${lt.name}</span>
+                        <span class="lt-desc">${lt.description}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        // Position popup below linetype span
+        const ltSpan = document.getElementById('layer-toolbar-linetype');
+        if (ltSpan) {
+            const rect = ltSpan.getBoundingClientRect();
+            popup.style.position = 'absolute';
+            popup.style.left = `${rect.left}px`;
+            popup.style.top = `${rect.bottom + 4}px`;
+        }
+
+        document.body.appendChild(popup);
+
+        // Handle linetype selection
+        popup.querySelectorAll('.layer-linetype-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                const lt = (e.currentTarget as HTMLElement).dataset.lt || 'CONTINUOUS';
+                this.renderer?.setLayerLineType(layerName, lt);
+                this.updateLayerToolbar();
+                this.updateLayerList();
+                this.commandLine?.print(`Layer ${layerName} linetype changed to ${lt}`, 'response');
+                popup.remove();
+                this.commandLine?.focus();
+            });
+        });
+
+        // Close on click outside
+        const closeHandler = (e: MouseEvent) => {
+            if (!popup.contains(e.target as Node) && e.target !== ltSpan) {
+                popup.remove();
+                document.removeEventListener('click', closeHandler);
+                this.commandLine?.focus();
             }
         };
         setTimeout(() => document.addEventListener('click', closeHandler), 0);
