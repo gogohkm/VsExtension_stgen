@@ -528,6 +528,7 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         </div>
     </div>
     <div id="command-panel">
+        <div id="command-panel-resize"></div>
         <div id="command-history"></div>
         <div id="command-input-line">
             <span id="command-prompt">Command:</span>

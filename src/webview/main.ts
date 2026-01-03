@@ -82,6 +82,7 @@ class DxfViewerApp {
         this.setupLayerPanel();
         this.setupPropertiesPanel();
         this.setupSnapPanel();
+        this.setupCommandPanelResize();
 
         // Setup message handler
         window.addEventListener('message', (event) => {
@@ -880,6 +881,51 @@ class DxfViewerApp {
         if (contextMenu) {
             contextMenu.classList.remove('visible');
         }
+    }
+
+    private setupCommandPanelResize(): void {
+        const resizeHandle = document.getElementById('command-panel-resize');
+        const commandPanel = document.getElementById('command-panel');
+        const viewerContainer = document.getElementById('viewer-container');
+
+        if (!resizeHandle || !commandPanel || !viewerContainer) return;
+
+        let isDragging = false;
+        let startY = 0;
+        let startHeight = 0;
+
+        const onMouseDown = (e: MouseEvent) => {
+            isDragging = true;
+            startY = e.clientY;
+            startHeight = commandPanel.offsetHeight;
+            resizeHandle.classList.add('dragging');
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        };
+
+        const onMouseMove = (e: MouseEvent) => {
+            if (!isDragging) return;
+
+            const deltaY = startY - e.clientY;
+            const newHeight = Math.min(300, Math.max(40, startHeight + deltaY));
+
+            commandPanel.style.height = `${newHeight}px`;
+            viewerContainer.style.bottom = `${newHeight + 25}px`; // +25 for status bar
+        };
+
+        const onMouseUp = () => {
+            if (!isDragging) return;
+
+            isDragging = false;
+            resizeHandle.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+
+        resizeHandle.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
     }
 
     private setupPropertiesPanel(): void {

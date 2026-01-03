@@ -19,7 +19,7 @@ html, body {
     top: 0;
     left: 0;
     right: 0;
-    bottom: 75px; /* command-panel(50px) + status-bar(24px) + 1px */
+    bottom: 90px; /* command-panel(65px) + status-bar(24px) + 1px */
     overflow: hidden;
 }
 
@@ -778,7 +778,9 @@ html, body {
     bottom: 24px;
     left: 0;
     right: 0;
-    height: 50px;
+    height: 65px;
+    min-height: 40px;
+    max-height: 300px;
     background-color: #3a3a3a; /* AutoCAD command line background */
     border-top: 1px solid #5a5a5a;
     display: flex;
@@ -788,10 +790,46 @@ html, body {
     z-index: 90;
 }
 
-/* Command history - 3 lines visible, scrollable with mouse wheel */
+/* Resize handle for command panel */
+#command-panel-resize {
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: ns-resize;
+    background: transparent;
+    z-index: 100;
+}
+
+#command-panel-resize:hover,
+#command-panel-resize.dragging {
+    background: linear-gradient(to bottom, rgba(0, 122, 204, 0.5), transparent);
+}
+
+#command-panel-resize::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 3px;
+    background: #666;
+    border-radius: 2px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+#command-panel-resize:hover::after,
+#command-panel-resize.dragging::after {
+    opacity: 1;
+}
+
+/* Command history - flexible height based on panel size */
 #command-history {
-    height: 28px; /* Show ~3 lines */
-    max-height: 28px;
+    flex: 1;
+    min-height: 20px;
     overflow-y: scroll;
     overflow-x: hidden;
     padding: 1px 8px;
