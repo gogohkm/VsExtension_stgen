@@ -140,6 +140,7 @@ export interface DxfLayer {
     frozen: boolean;
     off: boolean;
     lineType?: string;  // Default linetype for layer
+    lineWeight?: number; // Line weight in mm (0.00-2.11), -1 = ByBlock, -2 = ByLayer, -3 = Default
 }
 
 export interface DxfLineType {

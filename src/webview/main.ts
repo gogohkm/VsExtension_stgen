@@ -927,34 +927,226 @@ class DxfViewerApp {
             return;
         }
 
-        const entity = selected[0].userData.entity;
+        const threeObject = selected[0];
+        const entity = threeObject.userData.entity;
         if (!entity) {
             content.innerHTML = '<div class="no-selection">No properties available</div>';
             return;
         }
 
-        const html: string[] = [];
+        // Clear content and build interactive form
+        content.innerHTML = '';
 
-        // General properties
-        html.push('<div class="property-group">');
-        html.push('<div class="property-group-title">General</div>');
-        html.push(`<div class="property-row"><span class="property-label">Type</span><span class="property-value">${entity.type}</span></div>`);
-        html.push(`<div class="property-row"><span class="property-label">Layer</span><span class="property-value">${entity.layer}</span></div>`);
+        // General properties section
+        const generalSection = document.createElement('div');
+        generalSection.className = 'property-group';
+
+        const generalTitle = document.createElement('div');
+        generalTitle.className = 'property-group-title';
+        generalTitle.textContent = 'General';
+        generalSection.appendChild(generalTitle);
+
+        // Type (read-only)
+        this.addPropertyRow(generalSection, 'Type', entity.type, null, true);
+
+        // Layer (editable dropdown)
+        const layers = this.renderer.getLayers();
+        const layerSelect = document.createElement('select');
+        layerSelect.className = 'property-input property-select';
+        for (const layer of layers) {
+            const option = document.createElement('option');
+            option.value = layer.name;
+            option.textContent = layer.name;
+            if (layer.name === entity.layer) {
+                option.selected = true;
+            }
+            layerSelect.appendChild(option);
+        }
+        layerSelect.addEventListener('change', () => {
+            this.renderer?.changeEntityLayer(entity, layerSelect.value);
+            this.refreshLayerPanelIfVisible();
+            this.commandLine?.print(`Entity moved to layer: ${layerSelect.value}`, 'success');
+        });
+        this.addPropertyRowWithElement(generalSection, 'Layer', layerSelect);
+
+        // Handle (read-only)
         if (entity.handle) {
-            html.push(`<div class="property-row"><span class="property-label">Handle</span><span class="property-value">${entity.handle}</span></div>`);
+            this.addPropertyRow(generalSection, 'Handle', entity.handle, null, true);
         }
-        if (entity.lineType) {
-            html.push(`<div class="property-row"><span class="property-label">Linetype</span><span class="property-value">${entity.lineType}</span></div>`);
+
+        content.appendChild(generalSection);
+
+        // Geometry properties section
+        const geomSection = document.createElement('div');
+        geomSection.className = 'property-group';
+
+        const geomTitle = document.createElement('div');
+        geomTitle.className = 'property-group-title';
+        geomTitle.textContent = 'Geometry';
+        geomSection.appendChild(geomTitle);
+
+        this.addEditableEntityProperties(entity, geomSection);
+
+        content.appendChild(geomSection);
+    }
+
+    /**
+     * Adds a read-only property row
+     */
+    private addPropertyRow(container: HTMLElement, label: string, value: string | number, _property?: string | null, readOnly: boolean = false): void {
+        const row = document.createElement('div');
+        row.className = 'property-row';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'property-label';
+        labelSpan.textContent = label;
+
+        const valueSpan = document.createElement('span');
+        valueSpan.className = readOnly ? 'property-value' : 'property-value-editable';
+        valueSpan.textContent = typeof value === 'number' ? value.toFixed(4) : value;
+
+        row.appendChild(labelSpan);
+        row.appendChild(valueSpan);
+        container.appendChild(row);
+    }
+
+    /**
+     * Adds a property row with a custom element (like select or input)
+     */
+    private addPropertyRowWithElement(container: HTMLElement, label: string, element: HTMLElement): void {
+        const row = document.createElement('div');
+        row.className = 'property-row';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'property-label';
+        labelSpan.textContent = label;
+
+        row.appendChild(labelSpan);
+        row.appendChild(element);
+        container.appendChild(row);
+    }
+
+    /**
+     * Adds an editable input field for a property
+     */
+    private addEditablePropertyInput(container: HTMLElement, label: string, value: number, entity: any, property: string): void {
+        const row = document.createElement('div');
+        row.className = 'property-row';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'property-label';
+        labelSpan.textContent = label;
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'property-input';
+        input.value = value.toFixed(4);
+        input.step = '0.0001';
+
+        input.addEventListener('change', () => {
+            const newValue = parseFloat(input.value);
+            if (!isNaN(newValue)) {
+                this.renderer?.updateEntityProperty(entity, property, newValue);
+                this.commandLine?.print(`${label} changed to ${newValue.toFixed(4)}`, 'success');
+            }
+        });
+
+        row.appendChild(labelSpan);
+        row.appendChild(input);
+        container.appendChild(row);
+    }
+
+    /**
+     * Adds editable geometry properties based on entity type
+     */
+    private addEditableEntityProperties(entity: any, container: HTMLElement): void {
+        switch (entity.type) {
+            case 'LINE':
+                this.addEditablePropertyInput(container, 'Start X', entity.start.x, entity, 'start.x');
+                this.addEditablePropertyInput(container, 'Start Y', entity.start.y, entity, 'start.y');
+                this.addEditablePropertyInput(container, 'End X', entity.end.x, entity, 'end.x');
+                this.addEditablePropertyInput(container, 'End Y', entity.end.y, entity, 'end.y');
+                // Length (read-only, calculated)
+                const lineLen = Math.sqrt(Math.pow(entity.end.x - entity.start.x, 2) + Math.pow(entity.end.y - entity.start.y, 2));
+                this.addPropertyRow(container, 'Length', lineLen, null, true);
+                break;
+
+            case 'CIRCLE':
+                this.addEditablePropertyInput(container, 'Center X', entity.center.x, entity, 'center.x');
+                this.addEditablePropertyInput(container, 'Center Y', entity.center.y, entity, 'center.y');
+                this.addEditablePropertyInput(container, 'Radius', entity.radius, entity, 'radius');
+                // Diameter and circumference (read-only)
+                this.addPropertyRow(container, 'Diameter', entity.radius * 2, null, true);
+                this.addPropertyRow(container, 'Circumf.', entity.radius * 2 * Math.PI, null, true);
+                break;
+
+            case 'ARC':
+                this.addEditablePropertyInput(container, 'Center X', entity.center.x, entity, 'center.x');
+                this.addEditablePropertyInput(container, 'Center Y', entity.center.y, entity, 'center.y');
+                this.addEditablePropertyInput(container, 'Radius', entity.radius, entity, 'radius');
+                this.addEditablePropertyInput(container, 'Start Angle', entity.startAngle, entity, 'startAngle');
+                this.addEditablePropertyInput(container, 'End Angle', entity.endAngle, entity, 'endAngle');
+                break;
+
+            case 'TEXT':
+            case 'MTEXT':
+                this.addEditablePropertyInput(container, 'Position X', entity.position.x, entity, 'position.x');
+                this.addEditablePropertyInput(container, 'Position Y', entity.position.y, entity, 'position.y');
+                this.addEditablePropertyInput(container, 'Height', entity.height, entity, 'height');
+                // Text content (editable)
+                this.addEditableTextProperty(container, 'Text', entity.text, entity, 'text');
+                break;
+
+            case 'POLYLINE':
+            case 'LWPOLYLINE':
+                this.addPropertyRow(container, 'Vertices', entity.vertices.length, null, true);
+                this.addPropertyRow(container, 'Closed', entity.closed ? 'Yes' : 'No', null, true);
+                break;
+
+            case 'INSERT':
+                this.addPropertyRow(container, 'Block Name', entity.blockName, null, true);
+                this.addEditablePropertyInput(container, 'Position X', entity.position.x, entity, 'position.x');
+                this.addEditablePropertyInput(container, 'Position Y', entity.position.y, entity, 'position.y');
+                this.addEditablePropertyInput(container, 'Scale X', entity.scale.x, entity, 'scale.x');
+                this.addEditablePropertyInput(container, 'Scale Y', entity.scale.y, entity, 'scale.y');
+                this.addEditablePropertyInput(container, 'Rotation', entity.rotation, entity, 'rotation');
+                break;
+
+            case 'ELLIPSE':
+                this.addEditablePropertyInput(container, 'Center X', entity.center.x, entity, 'center.x');
+                this.addEditablePropertyInput(container, 'Center Y', entity.center.y, entity, 'center.y');
+                this.addEditablePropertyInput(container, 'Ratio', entity.ratio, entity, 'ratio');
+                break;
+
+            default:
+                this.addPropertyRow(container, '-', 'N/A', null, true);
         }
-        html.push('</div>');
+    }
 
-        // Type-specific properties
-        html.push('<div class="property-group">');
-        html.push('<div class="property-group-title">Geometry</div>');
-        this.addEntityProperties(entity, html);
-        html.push('</div>');
+    /**
+     * Adds an editable text input for text entities
+     */
+    private addEditableTextProperty(container: HTMLElement, label: string, value: string, entity: any, property: string): void {
+        const row = document.createElement('div');
+        row.className = 'property-row';
 
-        content.innerHTML = html.join('');
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'property-label';
+        labelSpan.textContent = label;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'property-input property-text-input';
+        input.value = value;
+
+        input.addEventListener('change', () => {
+            this.renderer?.updateEntityProperty(entity, property, input.value);
+            this.commandLine?.print(`Text changed`, 'success');
+        });
+
+        row.appendChild(labelSpan);
+        row.appendChild(input);
+        container.appendChild(row);
     }
 
     private addEntityProperties(entity: any, html: string[]): void {
@@ -1313,6 +1505,60 @@ class DxfViewerApp {
                 e.stopPropagation();
             });
 
+            // Lineweight dropdown
+            const lineWeightSelect = document.createElement('select');
+            lineWeightSelect.className = 'layer-lineweight-select';
+            lineWeightSelect.title = 'Layer line weight (mm)';
+
+            // Standard AutoCAD line weights in mm
+            const standardLineWeights = [
+                { value: 0.00, label: '0.00 mm' },
+                { value: 0.05, label: '0.05 mm' },
+                { value: 0.09, label: '0.09 mm' },
+                { value: 0.13, label: '0.13 mm' },
+                { value: 0.15, label: '0.15 mm' },
+                { value: 0.18, label: '0.18 mm' },
+                { value: 0.20, label: '0.20 mm' },
+                { value: 0.25, label: '0.25 mm' },
+                { value: 0.30, label: '0.30 mm' },
+                { value: 0.35, label: '0.35 mm' },
+                { value: 0.40, label: '0.40 mm' },
+                { value: 0.50, label: '0.50 mm' },
+                { value: 0.53, label: '0.53 mm' },
+                { value: 0.60, label: '0.60 mm' },
+                { value: 0.70, label: '0.70 mm' },
+                { value: 0.80, label: '0.80 mm' },
+                { value: 0.90, label: '0.90 mm' },
+                { value: 1.00, label: '1.00 mm' },
+                { value: 1.06, label: '1.06 mm' },
+                { value: 1.20, label: '1.20 mm' },
+                { value: 1.40, label: '1.40 mm' },
+                { value: 1.58, label: '1.58 mm' },
+                { value: 2.00, label: '2.00 mm' },
+                { value: 2.11, label: '2.11 mm' }
+            ];
+
+            for (const lw of standardLineWeights) {
+                const option = document.createElement('option');
+                option.value = lw.value.toString();
+                option.textContent = lw.label;
+                // Find closest match for selection
+                if (Math.abs(lw.value - layer.lineWeight) < 0.01) {
+                    option.selected = true;
+                }
+                lineWeightSelect.appendChild(option);
+            }
+
+            lineWeightSelect.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const weight = parseFloat(lineWeightSelect.value);
+                this.renderer?.setLayerLineWeight(layer.name, weight);
+                this.commandLine?.print(`Layer "${layer.name}" line weight set to ${weight} mm`, 'success');
+            });
+            lineWeightSelect.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+
             // Entity count
             const countSpan = document.createElement('span');
             countSpan.className = 'layer-count';
@@ -1322,6 +1568,7 @@ class DxfViewerApp {
             item.appendChild(colorPicker);
             item.appendChild(nameSpan);
             item.appendChild(lineTypeSelect);
+            item.appendChild(lineWeightSelect);
             item.appendChild(countSpan);
 
             // Click on layer name sets it as current

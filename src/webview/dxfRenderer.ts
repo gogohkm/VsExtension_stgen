@@ -1685,7 +1685,7 @@ export class DxfRenderer {
         return new Map(this.layerVisibility);
     }
 
-    getLayers(): Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string }> {
+    getLayers(): Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string; lineWeight: number }> {
         if (!this.parsedDxf) {
             return [];
         }
@@ -1697,7 +1697,7 @@ export class DxfRenderer {
             entityCounts.set(entity.layer, count + 1);
         }
 
-        const layers: Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string }> = [];
+        const layers: Array<{ name: string; color: number; colorIndex: number; visible: boolean; entityCount: number; lineType: string; lineWeight: number }> = [];
 
         // Add default layer if it has entities
         if (entityCounts.has('0') && !this.parsedDxf.layers.has('0')) {
@@ -1707,7 +1707,8 @@ export class DxfRenderer {
                 colorIndex: 7,
                 visible: this.layerVisibility.get('0') ?? true,
                 entityCount: entityCounts.get('0') || 0,
-                lineType: 'CONTINUOUS'
+                lineType: 'CONTINUOUS',
+                lineWeight: 0.25 // Default
             });
         }
 
@@ -1719,7 +1720,8 @@ export class DxfRenderer {
                 colorIndex: layer.color,
                 visible: this.layerVisibility.get(name) ?? true,
                 entityCount: entityCounts.get(name) || 0,
-                lineType: layer.lineType || 'CONTINUOUS'
+                lineType: layer.lineType || 'CONTINUOUS',
+                lineWeight: layer.lineWeight ?? 0.25
             });
         }
 
@@ -1732,7 +1734,8 @@ export class DxfRenderer {
                     colorIndex: 7,
                     visible: this.layerVisibility.get(layerName) ?? true,
                     entityCount: count,
-                    lineType: 'CONTINUOUS'
+                    lineType: 'CONTINUOUS',
+                    lineWeight: 0.25
                 });
             }
         }
@@ -3592,6 +3595,49 @@ export class DxfRenderer {
     }
 
     /**
+     * Sets the line weight for a layer
+     * @param layerName Layer name
+     * @param lineWeight Line weight in mm (0.00-2.11)
+     */
+    setLayerLineWeight(layerName: string, lineWeight: number): boolean {
+        if (!this.parsedDxf) {
+            return false;
+        }
+
+        const layer = this.parsedDxf.layers.get(layerName);
+        if (!layer) {
+            // Layer might exist only in entities, add it
+            this.parsedDxf.layers.set(layerName, {
+                name: layerName,
+                color: 7,
+                frozen: false,
+                off: false,
+                lineType: 'CONTINUOUS',
+                lineWeight: lineWeight
+            });
+        } else {
+            layer.lineWeight = lineWeight;
+        }
+
+        // Re-render entities on this layer with new line weight
+        this.updateLayerAppearance(layerName);
+        return true;
+    }
+
+    /**
+     * Gets the current layer's line weight
+     */
+    getCurrentLayerLineWeight(): number {
+        if (this.parsedDxf) {
+            const layer = this.parsedDxf.layers.get(this.currentDrawingLayer);
+            if (layer?.lineWeight !== undefined) {
+                return layer.lineWeight;
+            }
+        }
+        return 0.25; // Default
+    }
+
+    /**
      * Gets available linetypes
      */
     getAvailableLineTypes(): Array<{ name: string; description: string }> {
@@ -4396,5 +4442,98 @@ export class DxfRenderer {
         this.render();
 
         return textEntity;
+    }
+
+    /**
+     * Updates an entity's property and re-renders it
+     * @param entity The entity to update
+     * @param property The property name to change
+     * @param value The new value
+     * @returns true if successful
+     */
+    updateEntityProperty(entity: DxfEntity, property: string, value: any): boolean {
+        if (!entity || !this.parsedDxf) {
+            return false;
+        }
+
+        // Update the entity property
+        const entityAny = entity as any;
+
+        // Handle nested properties like 'start.x', 'center.y'
+        const parts = property.split('.');
+        if (parts.length === 2) {
+            if (entityAny[parts[0]]) {
+                entityAny[parts[0]][parts[1]] = value;
+            }
+        } else {
+            entityAny[property] = value;
+        }
+
+        // Find and re-render the 3D object
+        let objectToRemove: THREE.Object3D | null = null;
+        this.entityGroup.traverse((object) => {
+            if (object.userData.entity === entity) {
+                objectToRemove = object;
+            }
+        });
+
+        if (objectToRemove) {
+            this.entityGroup.remove(objectToRemove);
+
+            // Re-render the entity
+            const newObject = this.renderEntity(entity, this.parsedDxf);
+            if (newObject) {
+                newObject.userData.entity = entity;
+                newObject.userData.layer = entity.layer;
+                this.entityGroup.add(newObject);
+            }
+        }
+
+        this.render();
+        return true;
+    }
+
+    /**
+     * Changes an entity's layer
+     * @param entity The entity to move
+     * @param newLayerName The new layer name
+     * @returns true if successful
+     */
+    changeEntityLayer(entity: DxfEntity, newLayerName: string): boolean {
+        if (!entity || !this.parsedDxf) {
+            return false;
+        }
+
+        // Update entity layer
+        entity.layer = newLayerName;
+
+        // Ensure layer exists
+        if (!this.parsedDxf.layers.has(newLayerName)) {
+            this.addLayer(newLayerName);
+        }
+
+        // Find and re-render the 3D object
+        let objectToRemove: THREE.Object3D | null = null;
+        this.entityGroup.traverse((object) => {
+            if (object.userData.entity === entity) {
+                objectToRemove = object;
+            }
+        });
+
+        if (objectToRemove) {
+            this.entityGroup.remove(objectToRemove);
+
+            // Re-render with new layer properties
+            const newObject = this.renderEntity(entity, this.parsedDxf);
+            if (newObject) {
+                newObject.userData.entity = entity;
+                newObject.userData.layer = newLayerName;
+                newObject.visible = this.layerVisibility.get(newLayerName) ?? true;
+                this.entityGroup.add(newObject);
+            }
+        }
+
+        this.render();
+        return true;
     }
 }
