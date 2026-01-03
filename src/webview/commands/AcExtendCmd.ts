@@ -59,6 +59,9 @@ export class AcExtendCmd extends AcEdCommand {
 
         context.renderer.clearSelection();
 
+        // Highlight boundary edges
+        context.renderer.highlightEntities(boundaryEdges);
+
         // Step 2: Select objects to extend
         let continueSelecting = true;
         let extendCount = 0;
@@ -117,6 +120,9 @@ export class AcExtendCmd extends AcEdCommand {
                 }
             }
         }
+
+        // Clear highlight from boundary edges
+        context.renderer.clearHighlight();
 
         if (extendCount > 0) {
             context.commandLine.print(`${extendCount} object(s) extended`, 'success');

@@ -125,3 +125,104 @@ export class RectangleJig extends AcEdPreviewJig {
         this.renderer.clearRubberBand();
     }
 }
+
+/**
+ * Arc preview jig - shows rubber band arc through 3 points
+ */
+export class Arc3PointJig extends AcEdPreviewJig {
+    private startPoint: { x: number; y: number };
+    private secondPoint: { x: number; y: number } | null = null;
+
+    constructor(renderer: DxfRenderer, startPoint: { x: number; y: number }) {
+        super(renderer);
+        this.startPoint = startPoint;
+    }
+
+    setSecondPoint(point: { x: number; y: number }): void {
+        this.secondPoint = point;
+    }
+
+    update(point: { x: number; y: number }): void {
+        if (!this.secondPoint) {
+            // Show line from start to current point
+            this.renderer.updateLineRubberBandFromPoints(this.startPoint, point);
+        } else {
+            // Show arc through 3 points
+            this.renderer.updateArc3PointRubberBand(this.startPoint, this.secondPoint, point);
+        }
+    }
+
+    clear(): void {
+        this.renderer.clearRubberBand();
+    }
+}
+
+/**
+ * Arc preview jig for center-start-end method
+ */
+export class ArcCenterJig extends AcEdPreviewJig {
+    private center: { x: number; y: number };
+    private startPoint: { x: number; y: number } | null = null;
+    private radius: number = 0;
+    private startAngle: number = 0;
+
+    constructor(renderer: DxfRenderer, center: { x: number; y: number }) {
+        super(renderer);
+        this.center = center;
+    }
+
+    setStartPoint(point: { x: number; y: number }): void {
+        this.startPoint = point;
+        this.radius = Math.sqrt(
+            Math.pow(point.x - this.center.x, 2) +
+            Math.pow(point.y - this.center.y, 2)
+        );
+        this.startAngle = Math.atan2(point.y - this.center.y, point.x - this.center.x);
+    }
+
+    update(point: { x: number; y: number }): void {
+        if (!this.startPoint) {
+            // Show line from center to current point (defining radius)
+            this.renderer.updateLineRubberBandFromPoints(this.center, point);
+        } else {
+            // Show arc from start to current end angle
+            const endAngle = Math.atan2(point.y - this.center.y, point.x - this.center.x);
+            const startDeg = this.startAngle * 180 / Math.PI;
+            const endDeg = endAngle * 180 / Math.PI;
+            this.renderer.updateArcRubberBand(this.center, this.radius, startDeg, endDeg);
+        }
+    }
+
+    clear(): void {
+        this.renderer.clearRubberBand();
+    }
+}
+
+/**
+ * Dimension preview jig - shows dimension line preview
+ */
+export class DimensionJig extends AcEdPreviewJig {
+    private p1: { x: number; y: number };
+    private p2: { x: number; y: number };
+    private dimType: 'horizontal' | 'vertical' | 'aligned' | 'auto';
+
+    constructor(
+        renderer: DxfRenderer,
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        dimType: 'horizontal' | 'vertical' | 'aligned' | 'auto' = 'auto'
+    ) {
+        super(renderer);
+        this.p1 = p1;
+        this.p2 = p2;
+        this.dimType = dimType;
+    }
+
+    update(point: { x: number; y: number }): void {
+        this.renderer.updateDimensionRubberBand(this.p1, this.p2, point, this.dimType);
+    }
+
+    clear(): void {
+        this.renderer.clearRubberBand();
+    }
+}

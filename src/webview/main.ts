@@ -1492,6 +1492,151 @@ class DxfViewerApp {
         document.getElementById('layer-toolbar-delete')?.addEventListener('click', () => {
             this.deleteCurrentLayer();
         });
+
+        // OSNAP button - show snap settings popup
+        document.getElementById('layer-toolbar-snap')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.showSnapSettingsPopup(e.target as HTMLElement);
+        });
+
+        // ORTHO button - toggle ortho mode
+        document.getElementById('layer-toolbar-ortho')?.addEventListener('click', () => {
+            this.toggleOrtho();
+            this.updateToolbarOrthoButton();
+        });
+    }
+
+    private updateToolbarOrthoButton(): void {
+        const orthoBtn = document.getElementById('layer-toolbar-ortho');
+        if (orthoBtn && this.renderer) {
+            orthoBtn.classList.toggle('active', this.renderer.isOrthoEnabled());
+        }
+    }
+
+    private updateToolbarSnapButton(): void {
+        const snapBtn = document.getElementById('layer-toolbar-snap');
+        if (snapBtn && this.renderer) {
+            snapBtn.classList.toggle('active', this.renderer.isSnapEnabled());
+        }
+    }
+
+    private showSnapSettingsPopup(targetElement: HTMLElement): void {
+        // Remove existing popup
+        const existingPopup = document.getElementById('snap-settings-popup');
+        if (existingPopup) {
+            existingPopup.remove();
+            return; // Toggle off
+        }
+
+        const snapTypes = [
+            { id: 'endpoint', name: 'Endpoint', checked: true },
+            { id: 'midpoint', name: 'Midpoint', checked: true },
+            { id: 'center', name: 'Center', checked: true },
+            { id: 'quadrant', name: 'Quadrant', checked: false },
+            { id: 'intersection', name: 'Intersection', checked: false },
+            { id: 'perpendicular', name: 'Perpendicular', checked: false },
+            { id: 'nearest', name: 'Nearest', checked: false }
+        ];
+
+        // Get current snap settings from renderer
+        const activeSnapTypes = this.renderer?.getActiveSnapTypes() || [];
+        for (const st of snapTypes) {
+            st.checked = activeSnapTypes.includes(st.id as SnapType);
+        }
+
+        const popup = document.createElement('div');
+        popup.id = 'snap-settings-popup';
+        popup.className = 'snap-popup';
+        popup.innerHTML = `
+            <div class="snap-popup-title">
+                <span>Object Snap Settings</span>
+                <div>
+                    <button id="snap-popup-all">All</button>
+                    <button id="snap-popup-none">None</button>
+                </div>
+            </div>
+            <div class="snap-popup-list">
+                ${snapTypes.map(st => `
+                    <label class="snap-popup-item">
+                        <input type="checkbox" data-snap="${st.id}" ${st.checked ? 'checked' : ''}>
+                        <span>${st.name}</span>
+                    </label>
+                `).join('')}
+            </div>
+        `;
+
+        // Position popup below button
+        const rect = targetElement.getBoundingClientRect();
+        popup.style.position = 'absolute';
+        popup.style.left = `${rect.left}px`;
+        popup.style.top = `${rect.bottom + 4}px`;
+
+        document.body.appendChild(popup);
+
+        // Handle checkbox changes
+        popup.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', () => {
+                this.updateSnapTypesFromPopup();
+            });
+        });
+
+        // All button
+        popup.querySelector('#snap-popup-all')?.addEventListener('click', () => {
+            popup.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                (cb as HTMLInputElement).checked = true;
+            });
+            this.updateSnapTypesFromPopup();
+        });
+
+        // None button
+        popup.querySelector('#snap-popup-none')?.addEventListener('click', () => {
+            popup.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                (cb as HTMLInputElement).checked = false;
+            });
+            this.updateSnapTypesFromPopup();
+        });
+
+        // Close on click outside
+        const closeHandler = (e: MouseEvent) => {
+            if (!popup.contains(e.target as Node) && e.target !== targetElement) {
+                popup.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler), 0);
+    }
+
+    private updateSnapTypesFromPopup(): void {
+        if (!this.renderer) return;
+
+        const snapTypeMap: Record<string, SnapType> = {
+            'endpoint': SnapType.ENDPOINT,
+            'midpoint': SnapType.MIDPOINT,
+            'center': SnapType.CENTER,
+            'quadrant': SnapType.QUADRANT,
+            'intersection': SnapType.INTERSECTION,
+            'perpendicular': SnapType.PERPENDICULAR,
+            'nearest': SnapType.NEAREST
+        };
+
+        const activeTypes: SnapType[] = [];
+        const popup = document.getElementById('snap-settings-popup');
+        const checkboxes = popup?.querySelectorAll('input[type="checkbox"]:checked');
+
+        checkboxes?.forEach((checkbox) => {
+            const snapName = (checkbox as HTMLInputElement).dataset.snap;
+            if (snapName && snapTypeMap[snapName]) {
+                activeTypes.push(snapTypeMap[snapName]);
+            }
+        });
+
+        this.renderer.setActiveSnapTypes(activeTypes);
+
+        // Enable snap if any types are selected
+        if (activeTypes.length > 0) {
+            this.renderer.setSnapEnabled(true);
+        }
+        this.updateToolbarSnapButton();
     }
 
     private toggleLayerToolbar(visible?: boolean): void {

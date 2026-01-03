@@ -20,6 +20,7 @@ import { AcExtendCmd } from '../commands/AcExtendCmd';
 import { AcOffsetCmd } from '../commands/AcOffsetCmd';
 import { AcDimCmd, AcDimHorCmd, AcDimVerCmd, AcDimAlignedCmd, AcDimAngularCmd } from '../commands/AcDimCmd';
 import { AcZoomCmd, AcZoomWindowCmd, AcZoomExtentsCmd, AcZoomAllCmd } from '../commands/AcZoomCmd';
+import { AcPeditCmd } from '../commands/AcPeditCmd';
 
 /**
  * Registers all CAD commands to the command stack
@@ -80,6 +81,7 @@ export function registerCadCommands(): void {
     safeAdd('ACAD', 'TRIM', 'TR', new AcTrimCmd());
     safeAdd('ACAD', 'EXTEND', 'EX', new AcExtendCmd());
     safeAdd('ACAD', 'OFFSET', 'O', new AcOffsetCmd());
+    safeAdd('ACAD', 'PEDIT', 'PE', new AcPeditCmd());
 
     // Annotation commands - Dimensions
     safeAdd('ACAD', 'DIM', 'DLI', new AcDimCmd());

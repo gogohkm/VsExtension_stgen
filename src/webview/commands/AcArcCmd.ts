@@ -14,6 +14,7 @@
 
 import { AcEdCommand, EditorContext, AcEditorInterface } from '../editor/command/AcEdCommand';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
+import { Arc3PointJig, ArcCenterJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D, distance } from '../editor/input/handler/AcEdPointHandler';
 
 export class AcArcCmd extends AcEdCommand {
@@ -69,24 +70,33 @@ export class AcArcCmd extends AcEdCommand {
     private async draw3PointArc(context: EditorContext, editor: AcEditorInterface, startPoint: Point2D): Promise<void> {
         context.renderer.addDrawingPoint(startPoint.x, startPoint.y);
 
+        // Create jig for arc preview
+        const jig = new Arc3PointJig(context.renderer, startPoint);
+
         // Get second point
         const secondResult = await editor.getPoint({
             message: 'Specify second point of arc',
-            basePoint: startPoint
+            basePoint: startPoint,
+            jig
         });
 
         if (secondResult.status !== PromptStatus.OK || !secondResult.value) {
+            jig.clear();
             return;
         }
 
         const secondPoint = secondResult.value;
         context.renderer.addDrawingPoint(secondPoint.x, secondPoint.y);
+        jig.setSecondPoint(secondPoint);
 
-        // Get end point
+        // Get end point with arc preview
         const endResult = await editor.getPoint({
             message: 'Specify end point of arc',
-            basePoint: secondPoint
+            basePoint: secondPoint,
+            jig
         });
+
+        jig.clear();
 
         if (endResult.status !== PromptStatus.OK || !endResult.value) {
             return;
@@ -94,8 +104,8 @@ export class AcArcCmd extends AcEdCommand {
 
         const endPoint = endResult.value;
 
-        // Calculate arc from 3 points
-        const arc = this.calculateArcFrom3Points(startPoint, secondPoint, endPoint);
+        // Calculate arc from 3 points with correct direction
+        const arc = this.calculateArcFrom3PointsWithDirection(startPoint, secondPoint, endPoint);
 
         if (!arc) {
             context.commandLine.print('Cannot create arc from collinear points', 'error');
@@ -135,13 +145,18 @@ export class AcArcCmd extends AcEdCommand {
         const center = centerResult.value;
         context.renderer.addDrawingPoint(center.x, center.y);
 
+        // Create jig for arc preview
+        const jig = new ArcCenterJig(context.renderer, center);
+
         // Get start point (defines radius)
         const startResult = await editor.getPoint({
             message: 'Specify start point of arc',
-            basePoint: center
+            basePoint: center,
+            jig
         });
 
         if (startResult.status !== PromptStatus.OK || !startResult.value) {
+            jig.clear();
             return;
         }
 
@@ -150,12 +165,16 @@ export class AcArcCmd extends AcEdCommand {
         const startAngle = Math.atan2(startPoint.y - center.y, startPoint.x - center.x);
 
         context.renderer.addDrawingPoint(startPoint.x, startPoint.y);
+        jig.setStartPoint(startPoint);
 
-        // Get end point (defines end angle)
+        // Get end point (defines end angle) with arc preview
         const endResult = await editor.getPoint({
             message: 'Specify end point of arc',
-            basePoint: center
+            basePoint: center,
+            jig
         });
+
+        jig.clear();
 
         if (endResult.status !== PromptStatus.OK || !endResult.value) {
             return;
@@ -179,9 +198,10 @@ export class AcArcCmd extends AcEdCommand {
     }
 
     /**
-     * Calculates arc parameters from 3 points
+     * Calculates arc parameters from 3 points with correct direction
+     * The arc will pass through all three points in order: p1 -> p2 -> p3
      */
-    private calculateArcFrom3Points(
+    private calculateArcFrom3PointsWithDirection(
         p1: Point2D,
         p2: Point2D,
         p3: Point2D
@@ -207,9 +227,47 @@ export class AcArcCmd extends AcEdCommand {
         const center = { x: ux, y: uy };
         const radius = Math.sqrt(Math.pow(ax - ux, 2) + Math.pow(ay - uy, 2));
 
-        // Calculate angles
-        const startAngle = Math.atan2(ay - uy, ax - ux) * 180 / Math.PI;
-        const endAngle = Math.atan2(cy - uy, cx - ux) * 180 / Math.PI;
+        // Calculate angles for all three points
+        const angle1 = Math.atan2(ay - uy, ax - ux);
+        const angle2 = Math.atan2(by - uy, bx - ux);
+        const angle3 = Math.atan2(cy - uy, cx - ux);
+
+        // Determine if we need to go counterclockwise or clockwise
+        // Check if going from angle1 to angle3 counterclockwise passes through angle2
+        const normalizeAngle = (a: number) => {
+            while (a < 0) a += 2 * Math.PI;
+            while (a >= 2 * Math.PI) a -= 2 * Math.PI;
+            return a;
+        };
+
+        const a1 = normalizeAngle(angle1);
+        const a2 = normalizeAngle(angle2);
+        const a3 = normalizeAngle(angle3);
+
+        // Check counterclockwise direction
+        const ccwTo2 = normalizeAngle(a2 - a1);
+        const ccwTo3 = normalizeAngle(a3 - a1);
+
+        let startAngle: number;
+        let endAngle: number;
+
+        if (ccwTo2 < ccwTo3) {
+            // Counterclockwise order: 1 -> 2 -> 3
+            startAngle = angle1 * 180 / Math.PI;
+            endAngle = angle3 * 180 / Math.PI;
+        } else {
+            // Clockwise order: need to swap or adjust
+            // Go from p1 to p3 in clockwise direction (which is ccw from p3 to p1)
+            startAngle = angle3 * 180 / Math.PI;
+            endAngle = angle1 * 180 / Math.PI;
+            // Swap start and end to maintain p1 as start
+            startAngle = angle1 * 180 / Math.PI;
+            endAngle = angle3 * 180 / Math.PI;
+            // Need to indicate clockwise by making end < start
+            if (endAngle > startAngle) {
+                endAngle -= 360;
+            }
+        }
 
         return { center, radius, startAngle, endAngle };
     }

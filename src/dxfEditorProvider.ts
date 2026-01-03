@@ -460,6 +460,11 @@ export class DxfEditorProvider implements vscode.CustomReadonlyEditorProvider {
         <button class="layer-toolbar-btn" id="layer-toolbar-manager" title="Layer Manager">
             <span>⚙</span>
         </button>
+        <div class="layer-toolbar-separator"></div>
+        <div class="layer-toolbar-snap-section">
+            <span id="layer-toolbar-snap" class="layer-toolbar-snap-btn active" title="Object Snap Settings (click to configure)">OSNAP</span>
+            <span id="layer-toolbar-ortho" class="layer-toolbar-ortho-btn" title="Toggle Ortho Mode">ORTHO</span>
+        </div>
         <div class="layer-toolbar-info">
             <span id="layer-toolbar-count">0 layers</span>
         </div>

@@ -240,6 +240,10 @@ export class DxfRenderer {
     private commandInputMode: boolean = false; // When true, clicks don't affect selection at all (point input mode)
     private entitySelectionMode: boolean = false; // When true, single entity picking is active (for TRIM, EXTEND, etc.)
 
+    // Highlighted entities (for cutting edges, boundaries, etc.)
+    private highlightedEntities: Set<THREE.Object3D> = new Set();
+    private highlightMaterials: Map<THREE.Object3D, THREE.Material | THREE.Material[]> = new Map();
+
     // Material cache for performance
     private materialCache: MaterialCache = new MaterialCache();
 
@@ -1879,8 +1883,45 @@ export class DxfRenderer {
 
     setLayerLocked(layerName: string, locked: boolean): void {
         this.layerLocked.set(layerName, locked);
-        // Note: locked layers can still be viewed, just not edited
-        // Visual feedback could be added here (e.g., change entity opacity)
+        // Apply visual dimming to locked layers
+        this.updateLockedLayerAppearance(layerName, locked);
+    }
+
+    /**
+     * Updates the visual appearance of entities on a locked layer
+     * Locked layers are dimmed to indicate they cannot be edited
+     */
+    private updateLockedLayerAppearance(layerName: string, locked: boolean): void {
+        this.entityGroup.traverse((object) => {
+            if (object.userData.layer === layerName) {
+                if (object instanceof THREE.Line || object instanceof THREE.LineSegments) {
+                    const material = object.material as THREE.LineBasicMaterial;
+                    if (locked) {
+                        // Dim the entity by reducing opacity
+                        material.transparent = true;
+                        material.opacity = 0.35;
+                        object.userData.lockedDimmed = true;
+                    } else if (object.userData.lockedDimmed) {
+                        // Restore normal appearance
+                        material.opacity = 1.0;
+                        material.transparent = false;
+                        delete object.userData.lockedDimmed;
+                    }
+                } else if (object instanceof THREE.Mesh) {
+                    const material = object.material as THREE.MeshBasicMaterial;
+                    if (locked) {
+                        material.transparent = true;
+                        material.opacity = 0.35;
+                        object.userData.lockedDimmed = true;
+                    } else if (object.userData.lockedDimmed) {
+                        material.opacity = 1.0;
+                        material.transparent = false;
+                        delete object.userData.lockedDimmed;
+                    }
+                }
+            }
+        });
+        this.render();
     }
 
     isLayerLocked(layerName: string): boolean {
@@ -2594,6 +2635,65 @@ export class DxfRenderer {
         return entities;
     }
 
+    // ========== Highlight Mode (for cutting edges, boundaries, etc.) ==========
+
+    /**
+     * Highlights entities with a glow effect (e.g., for cutting edges in TRIM/EXTEND)
+     */
+    highlightEntities(entities: THREE.Object3D[]): void {
+        // Clear any existing highlights first
+        this.clearHighlight();
+
+        for (const object of entities) {
+            if (object instanceof THREE.Line || object instanceof THREE.LineSegments) {
+                // Store original material
+                this.highlightMaterials.set(object, object.material);
+                this.highlightedEntities.add(object);
+
+                // Create bright highlight material
+                const highlightMaterial = new THREE.LineBasicMaterial({
+                    color: 0x00ffff, // Cyan color for highlight
+                    linewidth: 2,
+                    transparent: true,
+                    opacity: 1.0
+                });
+                object.material = highlightMaterial;
+            } else if (object instanceof THREE.Mesh) {
+                // Store original material
+                this.highlightMaterials.set(object, object.material);
+                this.highlightedEntities.add(object);
+
+                // Create highlight material for meshes
+                const highlightMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x00ffff,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                object.material = highlightMaterial;
+            }
+        }
+
+        this.render();
+    }
+
+    /**
+     * Clears all highlighted entities, restoring their original materials
+     */
+    clearHighlight(): void {
+        for (const object of this.highlightedEntities) {
+            const originalMaterial = this.highlightMaterials.get(object);
+            if (originalMaterial) {
+                if (object instanceof THREE.Line || object instanceof THREE.LineSegments || object instanceof THREE.Mesh) {
+                    object.material = originalMaterial;
+                }
+            }
+        }
+
+        this.highlightedEntities.clear();
+        this.highlightMaterials.clear();
+        this.render();
+    }
+
     // ========== Command Selection Mode ==========
 
     /**
@@ -2787,6 +2887,17 @@ export class DxfRenderer {
         this.updateSelectionStatus();
         this.render();
         return true;
+    }
+
+    // Delete entity by handle
+    removeEntityByHandle(handle: string): boolean {
+        for (const object of this.entityGroup.children) {
+            const entity = object.userData.entity as DxfEntity;
+            if (entity && entity.handle === handle) {
+                return this.deleteEntity(object);
+            }
+        }
+        return false;
     }
 
     // ========== Snap Markers ==========
@@ -4349,6 +4460,232 @@ export class DxfRenderer {
 
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         this.rubberBandLine = new THREE.Line(geometry, material);
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
+    /**
+     * Update rubber band for arc preview (center, radius, angles)
+     */
+    updateArcRubberBand(
+        center: { x: number; y: number },
+        radius: number,
+        startAngleDeg: number,
+        endAngleDeg: number
+    ): void {
+        this.clearRubberBand();
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const startRad = startAngleDeg * Math.PI / 180;
+        const endRad = endAngleDeg * Math.PI / 180;
+
+        // Determine sweep direction (counterclockwise)
+        let angleDiff = endRad - startRad;
+        if (angleDiff <= 0) {
+            angleDiff += 2 * Math.PI;
+        }
+
+        const segments = Math.max(16, Math.floor(Math.abs(angleDiff) * 20));
+        const points: THREE.Vector3[] = [];
+
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const angle = startRad + angleDiff * t;
+            points.push(new THREE.Vector3(
+                center.x + radius * Math.cos(angle),
+                center.y + radius * Math.sin(angle),
+                0.1
+            ));
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        this.rubberBandLine = new THREE.Line(geometry, material);
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
+    /**
+     * Update rubber band for arc through 3 points
+     */
+    updateArc3PointRubberBand(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        p3: { x: number; y: number }
+    ): void {
+        this.clearRubberBand();
+
+        // Calculate circle through 3 points
+        const arc = this.calculateArcFrom3Points(p1, p2, p3);
+        if (!arc) {
+            // Points are collinear, show a line instead
+            this.updateLineRubberBandFromPoints(p1, p3);
+            return;
+        }
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const { center, radius, startAngle, endAngle } = arc;
+        const startRad = startAngle * Math.PI / 180;
+        const endRad = endAngle * Math.PI / 180;
+
+        // Calculate sweep to pass through second point
+        const midAngle = Math.atan2(p2.y - center.y, p2.x - center.x);
+
+        let angleDiff = endRad - startRad;
+        // Determine direction based on midpoint
+        const midT = (midAngle - startRad + 2 * Math.PI) % (2 * Math.PI);
+        const endT = (endRad - startRad + 2 * Math.PI) % (2 * Math.PI);
+
+        if (midT > endT) {
+            // Need to go the other way
+            angleDiff = -(2 * Math.PI - angleDiff);
+        }
+
+        const segments = Math.max(32, Math.floor(Math.abs(angleDiff) * 20));
+        const points: THREE.Vector3[] = [];
+
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const angle = startRad + angleDiff * t;
+            points.push(new THREE.Vector3(
+                center.x + radius * Math.cos(angle),
+                center.y + radius * Math.sin(angle),
+                0.1
+            ));
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        this.rubberBandLine = new THREE.Line(geometry, material);
+        this.drawingGroup.add(this.rubberBandLine);
+        this.render();
+    }
+
+    /**
+     * Calculate arc parameters from 3 points (for preview)
+     */
+    private calculateArcFrom3Points(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        p3: { x: number; y: number }
+    ): { center: { x: number; y: number }; radius: number; startAngle: number; endAngle: number } | null {
+        const ax = p1.x, ay = p1.y;
+        const bx = p2.x, by = p2.y;
+        const cx = p3.x, cy = p3.y;
+
+        const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+
+        if (Math.abs(d) < 0.0001) {
+            return null; // Points are collinear
+        }
+
+        const ux = ((ax * ax + ay * ay) * (by - cy) +
+            (bx * bx + by * by) * (cy - ay) +
+            (cx * cx + cy * cy) * (ay - by)) / d;
+
+        const uy = ((ax * ax + ay * ay) * (cx - bx) +
+            (bx * bx + by * by) * (ax - cx) +
+            (cx * cx + cy * cy) * (bx - ax)) / d;
+
+        const center = { x: ux, y: uy };
+        const radius = Math.sqrt(Math.pow(ax - ux, 2) + Math.pow(ay - uy, 2));
+
+        const startAngle = Math.atan2(ay - uy, ax - ux) * 180 / Math.PI;
+        const endAngle = Math.atan2(cy - uy, cx - ux) * 180 / Math.PI;
+
+        return { center, radius, startAngle, endAngle };
+    }
+
+    /**
+     * Update rubber band for dimension preview
+     */
+    updateDimensionRubberBand(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        dimLocation: { x: number; y: number },
+        dimType: 'horizontal' | 'vertical' | 'aligned' | 'auto'
+    ): void {
+        this.clearRubberBand();
+
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 1,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const points: THREE.Vector3[] = [];
+
+        let actualType = dimType;
+        if (dimType === 'auto') {
+            // Auto-detect based on cursor position
+            const isHorizontal = Math.abs(dimLocation.y - (p1.y + p2.y) / 2) >
+                                Math.abs(dimLocation.x - (p1.x + p2.x) / 2);
+            actualType = isHorizontal ? 'horizontal' : 'vertical';
+        }
+
+        if (actualType === 'horizontal') {
+            const dimY = dimLocation.y;
+            // Extension line 1
+            points.push(new THREE.Vector3(p1.x, p1.y, 0.1));
+            points.push(new THREE.Vector3(p1.x, dimY, 0.1));
+            points.push(new THREE.Vector3(p1.x, dimY, 0.1)); // Break for new line
+            // Dimension line
+            points.push(new THREE.Vector3(p1.x, dimY, 0.1));
+            points.push(new THREE.Vector3(p2.x, dimY, 0.1));
+            // Extension line 2
+            points.push(new THREE.Vector3(p2.x, dimY, 0.1));
+            points.push(new THREE.Vector3(p2.x, p2.y, 0.1));
+        } else if (actualType === 'vertical') {
+            const dimX = dimLocation.x;
+            // Extension line 1
+            points.push(new THREE.Vector3(p1.x, p1.y, 0.1));
+            points.push(new THREE.Vector3(dimX, p1.y, 0.1));
+            // Dimension line
+            points.push(new THREE.Vector3(dimX, p1.y, 0.1));
+            points.push(new THREE.Vector3(dimX, p2.y, 0.1));
+            // Extension line 2
+            points.push(new THREE.Vector3(dimX, p2.y, 0.1));
+            points.push(new THREE.Vector3(p2.x, p2.y, 0.1));
+        } else {
+            // Aligned dimension
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len < 0.001) return;
+
+            const perpX = -dy / len;
+            const perpY = dx / len;
+            const offset = (dimLocation.x - p1.x) * perpX + (dimLocation.y - p1.y) * perpY;
+
+            const d1Start = { x: p1.x, y: p1.y };
+            const d1End = { x: p1.x + perpX * offset, y: p1.y + perpY * offset };
+            const d2Start = { x: p2.x, y: p2.y };
+            const d2End = { x: p2.x + perpX * offset, y: p2.y + perpY * offset };
+
+            // Extension lines
+            points.push(new THREE.Vector3(d1Start.x, d1Start.y, 0.1));
+            points.push(new THREE.Vector3(d1End.x, d1End.y, 0.1));
+            // Dimension line
+            points.push(new THREE.Vector3(d1End.x, d1End.y, 0.1));
+            points.push(new THREE.Vector3(d2End.x, d2End.y, 0.1));
+            // Extension line 2
+            points.push(new THREE.Vector3(d2End.x, d2End.y, 0.1));
+            points.push(new THREE.Vector3(d2Start.x, d2Start.y, 0.1));
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        this.rubberBandLine = new THREE.LineSegments(geometry, material);
         this.drawingGroup.add(this.rubberBandLine);
         this.render();
     }

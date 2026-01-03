@@ -16,7 +16,7 @@
 
 import { AcEdCommand, EditorContext } from '../editor/command/AcEdCommand';
 import { PromptStatus } from '../editor/input/prompt/AcEdPromptResult';
-import { LineJig } from '../editor/input/AcEdPreviewJig';
+import { LineJig, DimensionJig } from '../editor/input/AcEdPreviewJig';
 import { Point2D, distance } from '../editor/input/handler/AcEdPointHandler';
 import { DxfEntity } from '../dxfParser';
 
@@ -229,10 +229,16 @@ export class AcDimCmd extends AcEdCommand {
 
         const { p1, p2 } = points;
 
-        // Get dimension line location
+        // Create dimension preview jig
+        const dimJig = new DimensionJig(context.renderer, p1, p2, 'auto');
+
+        // Get dimension line location with preview
         const dimLineResult = await context.editor.getPoint({
-            message: 'Specify dimension line location'
+            message: 'Specify dimension line location',
+            jig: dimJig
         });
+
+        dimJig.clear();
 
         if (dimLineResult.status !== PromptStatus.OK || !dimLineResult.value) {
             context.renderer.cancelDrawing();
@@ -320,10 +326,16 @@ export class AcDimHorCmd extends AcEdCommand {
 
         const { p1, p2 } = points;
 
-        // Get dimension line Y position
+        // Create dimension preview jig
+        const dimJig = new DimensionJig(context.renderer, p1, p2, 'horizontal');
+
+        // Get dimension line Y position with preview
         const dimLineResult = await context.editor.getPoint({
-            message: 'Specify dimension line location'
+            message: 'Specify dimension line location',
+            jig: dimJig
         });
+
+        dimJig.clear();
 
         if (dimLineResult.status !== PromptStatus.OK || !dimLineResult.value) {
             context.renderer.cancelDrawing();
@@ -396,10 +408,16 @@ export class AcDimVerCmd extends AcEdCommand {
 
         const { p1, p2 } = points;
 
-        // Get dimension line X position
+        // Create dimension preview jig
+        const dimJig = new DimensionJig(context.renderer, p1, p2, 'vertical');
+
+        // Get dimension line X position with preview
         const dimLineResult = await context.editor.getPoint({
-            message: 'Specify dimension line location'
+            message: 'Specify dimension line location',
+            jig: dimJig
         });
+
+        dimJig.clear();
 
         if (dimLineResult.status !== PromptStatus.OK || !dimLineResult.value) {
             context.renderer.cancelDrawing();
@@ -520,10 +538,16 @@ export class AcDimAlignedCmd extends AcEdCommand {
 
         const { p1, p2 } = points;
 
-        // Get dimension line offset position
+        // Create dimension preview jig
+        const dimJig = new DimensionJig(context.renderer, p1, p2, 'aligned');
+
+        // Get dimension line offset position with preview
         const dimLineResult = await context.editor.getPoint({
-            message: 'Specify dimension line location'
+            message: 'Specify dimension line location',
+            jig: dimJig
         });
+
+        dimJig.clear();
 
         if (dimLineResult.status !== PromptStatus.OK || !dimLineResult.value) {
             context.renderer.cancelDrawing();

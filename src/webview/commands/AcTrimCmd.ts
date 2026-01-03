@@ -59,6 +59,9 @@ export class AcTrimCmd extends AcEdCommand {
 
         context.renderer.clearSelection();
 
+        // Highlight cutting edges
+        context.renderer.highlightEntities(cuttingEdges);
+
         // Step 2: Select objects to trim
         let continueSelecting = true;
         let trimCount = 0;
@@ -111,6 +114,9 @@ export class AcTrimCmd extends AcEdCommand {
                 }
             }
         }
+
+        // Clear highlight from cutting edges
+        context.renderer.clearHighlight();
 
         if (trimCount > 0) {
             context.commandLine.print(`${trimCount} object(s) trimmed`, 'success');

@@ -105,6 +105,9 @@ export class AcOffsetCmd extends AcEdCommand {
                 continue;
             }
 
+            // Highlight selected object
+            context.renderer.highlightEntities([threeObject]);
+
             // Get side point or through point
             let actualDistance = this.offsetDistance;
             let sidePoint: Point2D;
@@ -115,6 +118,7 @@ export class AcOffsetCmd extends AcEdCommand {
                 });
 
                 if (throughResult.status !== PromptStatus.OK || !throughResult.value) {
+                    context.renderer.clearHighlight();
                     continue;
                 }
 
@@ -127,11 +131,15 @@ export class AcOffsetCmd extends AcEdCommand {
                 });
 
                 if (sideResult.status !== PromptStatus.OK || !sideResult.value) {
+                    context.renderer.clearHighlight();
                     continue;
                 }
 
                 sidePoint = sideResult.value;
             }
+
+            // Clear highlight before creating offset
+            context.renderer.clearHighlight();
 
             // Perform offset
             const success = this.performOffset(entity, actualDistance, sidePoint, context);
@@ -143,6 +151,9 @@ export class AcOffsetCmd extends AcEdCommand {
                 context.commandLine.print('Cannot create offset', 'error');
             }
         }
+
+        // Ensure highlight is cleared when done
+        context.renderer.clearHighlight();
 
         if (offsetCount > 0) {
             context.commandLine.print(`${offsetCount} offset(s) created`, 'success');
