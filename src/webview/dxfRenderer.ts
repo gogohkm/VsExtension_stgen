@@ -4959,9 +4959,8 @@ export class DxfRenderer {
         this.recordAction({
             label: 'Add',
             undo: () => {
-                for (const entity of entities) {
-                    this.removeEntityByReference(entity);
-                }
+                // Batch remove without individual renders
+                this.removeEntitiesByReferenceBatch(entities);
             },
             redo: () => {
                 this.insertEntitiesAtIndices(entities, indices);
@@ -5106,7 +5105,8 @@ export class DxfRenderer {
         // Get layer info for color and linetype
         const layerName = polyline.layer || '0';
         const layer = this.parsedDxf?.layers?.get(layerName);
-        const color = layer?.color ?? 7;
+        const aciColor = layer?.color ?? 7;
+        const color = aciToColor(aciColor);  // Convert ACI to hex color
         const lineTypeName = layer?.lineType || 'CONTINUOUS';
         const lineType = this.parsedDxf?.lineTypes?.get(lineTypeName) || null;
         const lineWidth = layer?.lineWeight ?? 1;
@@ -5289,6 +5289,44 @@ export class DxfRenderer {
                 this.parsedDxf.entities.splice(idx, 1);
             }
         }
+    }
+
+    /**
+     * Batch remove multiple entities without individual render calls (for undo optimization)
+     */
+    removeEntitiesByReferenceBatch(entities: DxfEntity[]): void {
+        for (const entity of entities) {
+            const object = this.findObjectByEntity(entity);
+            if (object) {
+                // Remove from selection if selected
+                if (this.selectedEntities.has(object)) {
+                    this.selectedEntities.delete(object);
+                }
+
+                // Remove from scene
+                this.entityGroup.remove(object);
+
+                // Clean up
+                this.originalMaterials.delete(object);
+                object.traverse((child) => {
+                    if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                        child.geometry.dispose();
+                    }
+                });
+            }
+
+            // Remove from parsed DXF
+            if (this.parsedDxf) {
+                const idx = this.parsedDxf.entities.indexOf(entity);
+                if (idx !== -1) {
+                    this.parsedDxf.entities.splice(idx, 1);
+                }
+            }
+        }
+
+        // Single render and status update at the end
+        this.updateSelectionStatus();
+        this.render();
     }
 
     insertEntitiesAtIndices(entities: DxfEntity[], indices: number[]): void {
@@ -5478,14 +5516,26 @@ export class DxfRenderer {
     }
 
     /**
-     * Clone an entity and add it to the DXF
-     * Returns the new cloned entity
+     * Deep clone an entity without adding to scene (for copy operations)
+     * Handle is NOT generated - caller should set it
      */
     cloneEntity(entity: DxfEntity): DxfEntity | null {
+        if (!entity) return null;
+
+        // Deep clone the entity data only
+        const cloned = JSON.parse(JSON.stringify(entity)) as DxfEntity;
+        return cloned;
+    }
+
+    /**
+     * Clone entity and add to scene (legacy method for compatibility)
+     */
+    cloneEntityAndAdd(entity: DxfEntity): DxfEntity | null {
         if (!this.parsedDxf) return null;
 
         // Deep clone the entity
-        const cloned = JSON.parse(JSON.stringify(entity)) as DxfEntity;
+        const cloned = this.cloneEntity(entity);
+        if (!cloned) return null;
 
         // Generate new handle
         cloned.handle = this.generateHandle();

@@ -132,6 +132,7 @@ export class AcCopyCmd extends AcEdCommand {
     /**
      * Copies all selected entities by the given displacement
      * Fixed: Apply displacement BEFORE rendering to show copy at correct position
+     * Optimized: Batch rendering to improve performance
      */
     private copySelectedEntities(context: EditorContext, dx: number, dy: number): DxfEntity[] {
         const selectedObjects = context.renderer.getSelectedEntities();
@@ -152,8 +153,9 @@ export class AcCopyCmd extends AcEdCommand {
             const entity = object.userData.entity as DxfEntity;
             if (!entity) continue;
 
-            // 1. Deep clone the entity data (without rendering)
-            const cloned = JSON.parse(JSON.stringify(entity)) as DxfEntity;
+            // 1. Deep clone the entity data
+            const cloned = context.renderer.cloneEntity(entity);
+            if (!cloned) continue;
 
             // 2. Generate new handle
             cloned.handle = context.renderer.generateHandle();
@@ -161,12 +163,15 @@ export class AcCopyCmd extends AcEdCommand {
             // 3. Apply displacement BEFORE adding to scene
             context.renderer.applyDisplacementToEntity(cloned, dx, dy);
 
-            // 4. Add to DXF and render at the displaced position
-            const newObject = context.renderer.addEntity(cloned);
+            // 4. Add to DXF and render at the displaced position (skip individual render)
+            const newObject = context.renderer.addEntity(cloned, { render: false });
             if (newObject) {
                 createdEntities.push(cloned);
             }
         }
+
+        // 5. Single render call after all entities are added
+        context.renderer.render();
 
         return createdEntities;
     }
