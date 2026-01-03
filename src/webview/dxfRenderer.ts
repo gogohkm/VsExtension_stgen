@@ -2465,9 +2465,11 @@ export class DxfRenderer {
                 // Clear previous hover
                 this.clearHover();
 
-                // Set new hover
+                // Set new hover - but skip highlight if already selected
                 this.hoveredEntity = hitObject;
-                this.highlightEntity(hitObject, 0x00ffff, false); // Cyan for hover (solid line)
+                if (!this.selectedEntities.has(hitObject)) {
+                    this.highlightEntity(hitObject, 0x00ffff, false); // Cyan for hover (solid line)
+                }
                 this.container.classList.add('hovering');
                 this.showEntityInfo(hitObject, e);
                 this.render();
@@ -2575,40 +2577,85 @@ export class DxfRenderer {
         const gapSize = this.screenToWorldDistance(4);
 
         object.traverse((child) => {
-            if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
-                // Store original material if not already stored
+            // Handle Line2 (thick lines) first - Line2 extends LineSegments2 extends Mesh
+            // Must check before THREE.Mesh since Line2 is a Mesh subclass
+            if (child instanceof Line2) {
+                if (!this.originalMaterials.has(child)) {
+                    this.originalMaterials.set(child, child.material);
+                }
+                const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+                const originalMat = child.material as LineMaterial;
+                if (useDashed) {
+                    const dashedMat = new LineMaterial({
+                        color,
+                        linewidth: originalMat.linewidth,
+                        resolution,
+                        dashed: true,
+                        dashSize,
+                        gapSize,
+                        dashScale: 1
+                    });
+                    dashedMat.defines.USE_DASH = '';
+                    dashedMat.needsUpdate = true;
+                    child.material = dashedMat;
+                    child.computeLineDistances();
+                } else {
+                    const solidMat = new LineMaterial({
+                        color,
+                        linewidth: originalMat.linewidth,
+                        resolution
+                    });
+                    solidMat.needsUpdate = true;
+                    child.material = solidMat;
+                }
+            } else if (child instanceof THREE.Line) {
+                // Regular THREE.Line (not Line2)
                 if (!this.originalMaterials.has(child)) {
                     this.originalMaterials.set(child, child.material);
                 }
 
-                // Apply highlight with dashed line for selection
-                if (child instanceof THREE.Line) {
-                    if (useDashed) {
-                        child.material = new THREE.LineDashedMaterial({
-                            color,
-                            dashSize,
-                            gapSize,
-                            scale: 1
-                        });
-                        // Compute line distances for dashed material
-                        child.computeLineDistances();
-                    } else {
-                        child.material = new THREE.LineBasicMaterial({ color });
-                    }
-                } else if (child instanceof THREE.Points) {
-                    child.material = new THREE.PointsMaterial({
+                if (useDashed) {
+                    const dashedMat = new THREE.LineDashedMaterial({
                         color,
-                        size: (child.material as THREE.PointsMaterial).size,
-                        sizeAttenuation: false
+                        dashSize,
+                        gapSize,
+                        scale: 1
                     });
-                } else if (child instanceof THREE.Mesh) {
-                    child.material = new THREE.MeshBasicMaterial({
-                        color,
-                        side: THREE.DoubleSide,
-                        transparent: true,
-                        opacity: 0.6
-                    });
+                    dashedMat.needsUpdate = true;
+                    child.material = dashedMat;
+                    child.computeLineDistances();
+                } else {
+                    child.material = new THREE.LineBasicMaterial({ color });
                 }
+            } else if (child instanceof THREE.Points) {
+                if (!this.originalMaterials.has(child)) {
+                    this.originalMaterials.set(child, child.material);
+                }
+                child.material = new THREE.PointsMaterial({
+                    color,
+                    size: (child.material as THREE.PointsMaterial).size,
+                    sizeAttenuation: false
+                });
+            } else if (child instanceof THREE.Sprite) {
+                // Handle Sprite (text entities)
+                if (!this.originalMaterials.has(child)) {
+                    this.originalMaterials.set(child, child.material);
+                }
+                const spriteMat = new THREE.SpriteMaterial({
+                    map: (child.material as THREE.SpriteMaterial).map,
+                    color: color
+                });
+                child.material = spriteMat;
+            } else if (child instanceof THREE.Mesh) {
+                if (!this.originalMaterials.has(child)) {
+                    this.originalMaterials.set(child, child.material);
+                }
+                child.material = new THREE.MeshBasicMaterial({
+                    color,
+                    side: THREE.DoubleSide,
+                    transparent: true,
+                    opacity: 0.6
+                });
             }
         });
     }
@@ -2617,7 +2664,7 @@ export class DxfRenderer {
         object.traverse((child) => {
             const original = this.originalMaterials.get(child);
             if (original) {
-                if (child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Mesh) {
+                if (child instanceof Line2 || child instanceof THREE.Line || child instanceof THREE.Points || child instanceof THREE.Sprite || child instanceof THREE.Mesh) {
                     child.material = original;
                 }
                 this.originalMaterials.delete(child);
@@ -2767,33 +2814,77 @@ export class DxfRenderer {
         const gapSize = this.screenToWorldDistance(4);
 
         for (const object of entities) {
-            if (object instanceof THREE.Line || object instanceof THREE.LineSegments) {
-                // Store original material
-                this.highlightMaterials.set(object, object.material);
-                this.highlightedEntities.add(object);
+            this.highlightedEntities.add(object);
 
-                // Create dashed highlight material
-                const highlightMaterial = new THREE.LineDashedMaterial({
-                    color: 0x00ffff, // Cyan color for highlight
-                    dashSize,
-                    gapSize,
-                    scale: 1
-                });
-                object.material = highlightMaterial;
-                object.computeLineDistances();
-            } else if (object instanceof THREE.Mesh) {
-                // Store original material
-                this.highlightMaterials.set(object, object.material);
-                this.highlightedEntities.add(object);
+            // Traverse to handle nested objects (INSERT, Group, etc.)
+            object.traverse((child) => {
+                // Handle Line2 first - Line2 extends LineSegments2 extends Mesh
+                // Must check before THREE.Mesh since Line2 is a Mesh subclass
+                if (child instanceof Line2) {
+                    if (!this.highlightMaterials.has(child)) {
+                        this.highlightMaterials.set(child, child.material);
+                    }
+                    const resolution = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+                    const originalMat = child.material as LineMaterial;
+                    const dashedMat = new LineMaterial({
+                        color: 0x00ffff,
+                        linewidth: originalMat.linewidth,
+                        resolution,
+                        dashed: true,
+                        dashSize,
+                        gapSize,
+                        dashScale: 1
+                    });
+                    dashedMat.defines.USE_DASH = '';
+                    dashedMat.needsUpdate = true;
+                    child.material = dashedMat;
+                    child.computeLineDistances();
+                } else if (child instanceof THREE.Line) {
+                    // Regular THREE.Line (not Line2)
+                    if (!this.highlightMaterials.has(child)) {
+                        this.highlightMaterials.set(child, child.material);
+                    }
 
-                // Create highlight material for meshes
-                const highlightMaterial = new THREE.MeshBasicMaterial({
-                    color: 0x00ffff,
-                    transparent: true,
-                    opacity: 0.8
-                });
-                object.material = highlightMaterial;
-            }
+                    const highlightMaterial = new THREE.LineDashedMaterial({
+                        color: 0x00ffff,
+                        dashSize,
+                        gapSize,
+                        scale: 1
+                    });
+                    highlightMaterial.needsUpdate = true;
+                    child.material = highlightMaterial;
+                    child.computeLineDistances();
+                } else if (child instanceof THREE.Points) {
+                    if (!this.highlightMaterials.has(child)) {
+                        this.highlightMaterials.set(child, child.material);
+                    }
+
+                    child.material = new THREE.PointsMaterial({
+                        color: 0x00ffff,
+                        size: (child.material as THREE.PointsMaterial).size,
+                        sizeAttenuation: false
+                    });
+                } else if (child instanceof THREE.Sprite) {
+                    if (!this.highlightMaterials.has(child)) {
+                        this.highlightMaterials.set(child, child.material);
+                    }
+
+                    child.material = new THREE.SpriteMaterial({
+                        map: (child.material as THREE.SpriteMaterial).map,
+                        color: 0x00ffff
+                    });
+                } else if (child instanceof THREE.Mesh) {
+                    if (!this.highlightMaterials.has(child)) {
+                        this.highlightMaterials.set(child, child.material);
+                    }
+
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0x00ffff,
+                        transparent: true,
+                        opacity: 0.8
+                    });
+                }
+            });
         }
 
         this.render();
@@ -2803,12 +2894,15 @@ export class DxfRenderer {
      * Clears all highlighted entities, restoring their original materials
      */
     clearHighlight(): void {
-        for (const object of this.highlightedEntities) {
-            const originalMaterial = this.highlightMaterials.get(object);
-            if (originalMaterial) {
-                if (object instanceof THREE.Line || object instanceof THREE.LineSegments || object instanceof THREE.Mesh) {
-                    object.material = originalMaterial;
-                }
+        // Restore materials for all stored objects (including children)
+        for (const [object, originalMaterial] of this.highlightMaterials) {
+            if (object instanceof Line2 ||
+                object instanceof THREE.Line ||
+                object instanceof THREE.LineSegments ||
+                object instanceof THREE.Points ||
+                object instanceof THREE.Sprite ||
+                object instanceof THREE.Mesh) {
+                object.material = originalMaterial;
             }
         }
 
